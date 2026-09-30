@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1F4E78">
+  <meta name="robots" content="noindex">
+  <title>Asistencia CMN 2026</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231F4E78'/%3E%3Cpath d='M18 34l9 9 19-21' stroke='white' stroke-width='7' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="barra">
+    <button id="btnVolver" class="barra-btn" type="button" hidden aria-label="Volver">‹ Volver</button>
+    <div class="barra-titulo">
+      <span id="tituloEvento">Congreso</span>
+      <small id="subtitulo"></small>
+    </div>
+    <button id="btnSalir" class="barra-btn" type="button" hidden>Salir</button>
+  </header>
+
+  <div id="avisoRed" class="aviso aviso-rojo" hidden role="status">Sin conexión a internet. Lo que escriba se conserva; guárdelo cuando vuelva la señal.</div>
+  <div id="avisoConfig" class="aviso aviso-rojo" hidden>Falta configurar la URL del Apps Script en <b>app.js</b> (constante <code>API_URL</code>).</div>
+
+  <main id="app">
+    <!-- Pantalla 1: inicio -->
+    <section id="vInicio" class="vista" hidden>
+      <div id="bloqueoInicio" class="aviso aviso-naranja" hidden>La edición está bloqueada: los encargados solo pueden consultar.</div>
+      <p class="ayuda">Toque su salón para registrar la asistencia.</p>
+      <div id="gridSalones" class="grid-salones" aria-live="polite"></div>
+      <p id="errorInicio" class="msg-error" hidden></p>
+      <div class="pie-inicio">
+        <button id="btnAdmin" type="button" class="btn-discreto">Administrador</button>
+      </div>
+    </section>
+
+    <!-- Pantalla 2: PIN -->
+    <section id="vPin" class="vista" hidden>
+      <form id="formPin" class="caja-pin" autocomplete="off">
+        <h2 id="pinTitulo">Salón</h2>
+        <label for="inpPin">PIN de acceso</label>
+        <input id="inpPin" type="password" inputmode="numeric" autocomplete="off" maxlength="12" required>
+        <button id="btnEntrar" type="submit" class="btn btn-primario btn-grande">Entrar</button>
+        <p id="errorPin" class="msg-error" hidden role="alert"></p>
+      </form>
+    </section>
+
+    <!-- Pantallas 3 y 4: días y actividades del salón -->
+    <section id="vSalon" class="vista" hidden>
+      <nav id="tabsDias" class="tabs-dias" aria-label="Días"></nav>
+      <div id="bloqueoSalon" class="aviso aviso-naranja" hidden>La edición está bloqueada por el administrador. Solo puede consultar.</div>
+      <div class="resumen-dia">
+        <div><span class="res-num" id="resTotal">0</span><span class="res-lbl">asistentes del día</span></div>
+        <div><span class="res-num" id="resCharlas">0 / 0</span><span class="res-lbl">charlas registradas</span></div>
+        <button id="btnRecargar" type="button" class="btn btn-secundario">↻ Recargar</button>
+      </div>
+      <p class="actualizado" id="actualizado"></p>
+      <p id="errorSalon" class="msg-error" hidden role="alert"></p>
+      <div id="listaActividades"></div>
+      <div id="barraGuardarTodo" class="barra-guardar">
+        <button id="btnGuardarTodo" type="button" class="btn btn-primario btn-grande">Guardar todo</button>
+      </div>
+    </section>
+
+    <!-- Pantalla 5: administrador -->
+    <section id="vAdmin" class="vista vista-ancha" hidden>
+      <div class="admin-acciones">
+        <button id="admRecargar" type="button" class="btn btn-secundario">↻ Recargar</button>
+        <button id="admBloqueo" type="button" class="btn btn-secundario">Bloquear edición</button>
+        <a id="admHoja" class="btn btn-secundario" href="#" target="_blank" rel="noopener">Abrir Google Sheet ↗</a>
+        <button id="admCsv" type="button" class="btn btn-secundario">Exportar CSV</button>
+      </div>
+      <p id="admEstadoBloqueo" class="estado-bloqueo"></p>
+      <p id="errorAdmin" class="msg-error" hidden role="alert"></p>
+
+      <fieldset class="filtros">
+        <legend>Filtros</legend>
+        <label>Día <select id="fDia"></select></label>
+        <label>Salón <select id="fSalon"></select></label>
+        <label>Estado
+          <select id="fEstado">
+            <option value="">Todos</option>
+            <option value="CONFIRMADO">Confirmado</option>
+            <option value="PENDIENTE">Pendiente</option>
+          </select>
+        </label>
+        <label class="chk"><input type="checkbox" id="fSinRegistrar"> Solo sin registrar</label>
+        <label class="buscar">Buscar <input type="search" id="fTexto" placeholder="Charla, expositor, ID…"></label>
+      </fieldset>
+
+      <nav class="tabs-admin" role="tablist">
+        <button type="button" data-tab="totales" class="activa">Totales</button>
+        <button type="button" data-tab="charlas">Charlas</button>
+        <button type="button" data-tab="atrasadas">Sin registrar y ya pasaron <span id="nAtrasadas" class="pill">0</span></button>
+        <button type="button" data-tab="bitacora">Bitácora</button>
+      </nav>
+
+      <div id="admTotales" class="adm-panel"></div>
+      <div id="admCharlas" class="adm-panel" hidden></div>
+      <div id="admAtrasadas" class="adm-panel" hidden></div>
+      <div id="admBitacora" class="adm-panel" hidden></div>
+    </section>
+
+    <div id="cargando" class="cargando" hidden><span class="spinner"></span> Cargando…</div>
+  </main>
+
+  <div id="toast" class="toast" hidden role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

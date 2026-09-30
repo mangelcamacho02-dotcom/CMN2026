@@ -1,0 +1,5 @@
+# Datos reales del congreso: NO subir a GitHub (el repositorio de GitHub Pages es público).
+*.xlsx
+pruebas/datos_prueba.json
+pruebas/capturas/
+node_modules/
