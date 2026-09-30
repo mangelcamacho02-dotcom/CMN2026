@@ -73,9 +73,16 @@ var NOMBRES_DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viern
  */
 function doGet(e) {
   var p = (e && e.parameter) || {};
-  if (!p.accion) p.accion = 'ping';
-  if (p.accion !== 'ping' && p.accion !== 'getSalones') {
-    return responderJson_({ ok: false, error: 'Use POST para esta acción.' });
+  // Tolera caracteres de más al copiar la URL (comillas, puntos, espacios, mayúsculas).
+  var recibido = String(p.accion || '');
+  var accion = recibido.replace(/[^A-Za-z]/g, '').toLowerCase();
+  if (!accion || accion === 'ping') {
+    p.accion = 'ping';
+  } else if (accion === 'getsalones') {
+    p.accion = 'getSalones';
+  } else {
+    return responderJson_({ ok: false, error: 'Por GET solo se permite ?accion=getSalones (se recibió "' + recibido +
+      '"). Las demás acciones se usan desde la página con POST.' });
   }
   return responderJson_(ejecutarAccion_(p));
 }

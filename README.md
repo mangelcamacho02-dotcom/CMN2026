@@ -85,7 +85,15 @@ Debe tener 4 pestañas: `Actividades`, `Salones`, `Config` y `Bitacora`. No les 
 4. Clic en **Implementar**. (Si vuelve a pedir permisos, acéptelos como en el paso anterior.)
 5. Copie la **URL de la aplicación web**. Termina en `/exec`, algo así:
    `https://script.google.com/macros/s/AKfycb.../exec`
-6. Pruebe: pegue la URL en el navegador y agregue al final `?accion=getSalones`. Debe ver un texto que empieza con `{"ok":true,"evento":"Congreso Médico Nacional 2026"...`.
+6. Pruebe: pegue la URL en el navegador y agregue al final, sin espacios ni comillas:
+
+   ```
+   ?accion=getSalones
+   ```
+
+   Debe quedar así: `https://script.google.com/macros/s/AKfycb.../exec?accion=getSalones`.
+   Debe ver un texto que empieza con `{"ok":true,"evento":"Congreso Médico Nacional 2026"...`.
+   Si abre la URL sola (sin `?accion=...`) debe ver `{"ok":true,"mensaje":"API CMN 2026 activa"...}`.
 
 > "Cualquier persona" significa que la página puede hablar con el script sin iniciar sesión en Google. Los datos siguen protegidos por los PINes: sin un PIN válido solo se ve la lista de salones y su avance.
 
@@ -171,6 +179,7 @@ Si cambia `index.html`, `styles.css` o `app.js` en GitHub, GitHub Pages se actua
 | "El PIN cambió. Vuelva a ingresarlo." | Se cambió el PIN en la hoja; el encargado debe ingresar el nuevo. |
 | "Falta la columna … en la hoja …" | Se renombró o borró un encabezado. Restáurelo. |
 | El día de "hoy" no se selecciona o la lista de atrasadas está rara | Revise `Config → Fecha_inicio` (paso 2). |
+| Al probar la URL sale `"Use POST para esta acción."` | Es la primera versión de `Code.gs`. Pegue el `Code.gs` actual y publique una nueva versión (paso 7). |
 | Hice cambios en `Code.gs` y no se ven | Publique una nueva versión (paso 7). |
 
 ## 10. Seguridad y privacidad
