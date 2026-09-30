@@ -6,7 +6,7 @@
 
 // URL de la aplicación web de Apps Script (termina en /exec).
 // Es lo ÚNICO que hay que cambiar en este archivo.
-const API_URL = 'PEGUE_AQUI_LA_URL_DE_SU_APPS_SCRIPT';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwO7EsIIo6AlRPD4Kwn1CTui--G04Trrb4LD0yQzVtq099P7RsNBii5UB_v6mSBplOJ/exec';
 
 const REFRESCO_MS = 60 * 1000;   // la vista se actualiza sola cada 60 s
 const TIMEOUT_MS = 30 * 1000;    // tiempo máximo de espera por respuesta
