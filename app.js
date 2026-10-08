@@ -162,6 +162,10 @@ async function api(accion, datos) {
 /** Igual que api() pero lanza error si la respuesta trae ok:false. */
 async function apiOk(accion, datos) {
   const r = await api(accion, datos);
+  if (r && !r.ok && /^Acción desconocida/.test(r.error || '')) {
+    throw errorApp('El Apps Script publicado es una versión vieja. Pegue el Code.gs actual en Apps Script y publique ' +
+      '"Nueva versión" (Implementar → Gestionar implementaciones → ✏ → Nueva versión).', 'VERSION');
+  }
   if (!r || !r.ok) throw errorApp((r && r.error) || 'Error desconocido.', r && r.codigo);
   return r;
 }

@@ -39,6 +39,9 @@
 // ---------------------------------------------------------------------------
 
 /** Zona horaria usada para "hoy", la hora actual y las horas de registro. */
+/** Versión de este archivo. Al abrir la URL de la app web debe aparecer este número. */
+var VERSION = '2026-10-08 computadora';
+
 var ZONA_HORARIA = 'America/Costa_Rica';
 
 /** Nombres de las hojas. */
@@ -111,7 +114,7 @@ function doPost(e) {
 function ejecutarAccion_(p) {
   try {
     switch (p.accion) {
-      case 'ping':              return { ok: true, mensaje: 'API CMN 2026 activa', ahora: ahora_().iso };
+      case 'ping':              return { ok: true, mensaje: 'API CMN 2026 activa', version: VERSION, ahora: ahora_().iso };
       case 'getSalones':        return getSalones();
       case 'getTodo':           return getTodo();
       case 'login':             return login(p.salon, p.pin);
