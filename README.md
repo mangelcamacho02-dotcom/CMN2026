@@ -1,25 +1,25 @@
 # Registro de asistencia por charla — CMN 2026
 
-Sistema web para que los encargados de cada salón del **Congreso Médico Nacional 2026** registren desde el celular o la tablet cuántas personas asistieron a cada charla.
+Sistema web para que el **personal de apoyo** del **Congreso Médico Nacional 2026** registre, desde una computadora, cuántas personas asistieron a cada charla. También funciona en tablet o celular.
 
 - **Base de datos:** una hoja de Google Sheets (el archivo `BD_Asistencia_CMN2026.xlsx` convertido).
 - **Servidor:** Google Apps Script vinculado a esa hoja (`Code.gs`).
 - **Página web:** `index.html`, `styles.css` y `app.js`, publicados gratis en GitHub Pages.
 
-Todo lo que usted cambie en la hoja (charlas, expositores, correos, horas, PINes, estado) se ve en el sistema al recargar la página. No hace falta tocar código.
+Todo lo que usted cambie en la hoja (charlas, expositores, correos, horas, estado) se ve en el sistema al recargar la página. No hace falta tocar código.
 
 ---
 
 ## Contenido
 
 1. [Subir el Excel a Google Drive y convertirlo](#1-subir-el-excel-a-google-drive-y-convertirlo)
-2. [Poner los PINes y revisar la configuración](#2-poner-los-pines-y-revisar-la-configuración)
+2. [Revisar la configuración (PIN de administrador)](#2-revisar-la-configuración-pin-de-administrador)
 3. [Pegar el código en Apps Script](#3-pegar-el-código-en-apps-script)
 4. [Publicar el Apps Script como aplicación web](#4-publicar-el-apps-script-como-aplicación-web)
 5. [Publicar la página en GitHub Pages](#5-publicar-la-página-en-github-pages)
 6. [Uso diario: cambios desde la hoja](#6-uso-diario-cambios-desde-la-hoja)
 7. [Si cambia el código: publicar una nueva versión](#7-si-cambia-el-código-publicar-una-nueva-versión)
-8. [Cómo se usa (encargados y administrador)](#8-cómo-se-usa)
+8. [Cómo se usa (personal de apoyo y administrador)](#8-cómo-se-usa)
 9. [Problemas frecuentes](#9-problemas-frecuentes)
 10. [Seguridad y privacidad](#10-seguridad-y-privacidad)
 11. [Pruebas (para personal técnico)](#11-pruebas-para-personal-técnico)
@@ -37,27 +37,28 @@ Todo lo que usted cambie en la hoja (charlas, expositores, correos, horas, PINes
 
 Debe tener 4 pestañas: `Actividades`, `Salones`, `Config` y `Bitacora`. No les cambie el nombre.
 
-## 2. Poner los PINes y revisar la configuración
+## 2. Revisar la configuración (PIN de administrador)
+
+El registro de asistencia **no pide PIN**: lo usa solo el personal de apoyo. Cada persona escribe su nombre arriba ("Registra") y queda anotado junto a cada número que guarde. **Solo el panel de Administración pide PIN** (`Config → PIN_admin`).
 
 ### Hoja `Salones`
 
 | Salon | PIN_encargado | Encargado | Activo |
 |---|---|---|---|
-| Real 1 | 4821 | Ana Pérez | TRUE |
+| Real 1 | *(no se usa)* | Ana Pérez | TRUE |
 
-- En el archivo original todos los PINes dicen **`CAMBIAR`**. Mientras un salón tenga `CAMBIAR` (o esté vacío) **nadie puede entrar a ese salón**. Ponga un PIN distinto para cada salón.
-- Consejo: seleccione la columna `PIN_encargado` y use **Formato → Número → Texto sin formato** antes de escribir los PINes. Así un PIN como `0123` no pierde el cero (de todas formas el sistema lo tolera).
-- `Activo`: si lo pone en `FALSE` (desmarca la casilla), el salón desaparece de la pantalla de inicio.
-- El orden de las tarjetas en la pantalla de inicio es el orden de las filas de esta hoja.
+- `PIN_encargado` ya no se usa; puede dejarlo como está.
+- `Activo`: si lo pone en `FALSE` (desmarca la casilla), el salón desaparece de la lista.
+- El orden de los salones en la columna izquierda es el orden de las filas de esta hoja.
 
 ### Hoja `Config`
 
 | Clave | Valor | Para qué sirve |
 |---|---|---|
-| `PIN_admin` | (su PIN) | PIN del administrador. Entra al panel y a cualquier salón. Cámbielo: con `CAMBIAR` no funciona. |
+| `PIN_admin` | (su PIN) | PIN del panel de Administración. Cámbielo: con `CAMBIAR` no funciona. Use 6 dígitos o más. |
 | `Evento` | Congreso Médico Nacional 2026 | Título que se ve arriba. |
 | `Dias` | Lunes,Martes,Miércoles,Jueves,Viernes | Días que se muestran como botones. |
-| `Bloquear_edicion` | NO | `SI` = los encargados solo pueden ver. Se puede cambiar también desde el panel. |
+| `Bloquear_edicion` | NO | `SI` = el personal de apoyo solo puede consultar. Se puede cambiar también desde el panel. |
 | `Fecha_inicio` | 9/11/2026 *(ejemplo)* | **Fila nueva, recomendada.** Fecha del lunes del congreso. |
 
 > **Importante — agregue la fila `Fecha_inicio`.** El Excel no trae las fechas reales del congreso, solo los nombres de los días. Con esta fila el sistema sabe qué día es "hoy" (para abrir ese día por defecto) y qué charlas "ya pasaron y no tienen asistencia". Si no la agrega, el sistema asume que el congreso es **la semana en curso**, lo cual solo es correcto durante la semana del congreso.
@@ -95,7 +96,7 @@ Debe tener 4 pestañas: `Actividades`, `Salones`, `Config` y `Bitacora`. No les 
    Debe ver un texto que empieza con `{"ok":true,"evento":"Congreso Médico Nacional 2026"...`.
    Si abre la URL sola (sin `?accion=...`) debe ver `{"ok":true,"mensaje":"API CMN 2026 activa"...}`.
 
-> "Cualquier persona" significa que la página puede hablar con el script sin iniciar sesión en Google. Los datos siguen protegidos por los PINes: sin un PIN válido solo se ve la lista de salones y su avance.
+> "Cualquier persona" significa que la página puede hablar con el script sin iniciar sesión en Google. Como el registro no pide PIN, **comparta la dirección solo con el personal de apoyo** (ver sección 10).
 
 ## 5. Publicar la página en GitHub Pages
 
@@ -111,7 +112,7 @@ Debe tener 4 pestañas: `Actividades`, `Salones`, `Config` y `Bitacora`. No les 
    - **Branch:** `main` y carpeta `/ (root)` → **Save**.
 5. Espere 1–2 minutos. Arriba de esa misma página aparecerá la dirección, del tipo
    `https://<su-usuario>.github.io/cmn2026/`
-6. Ábrala en el celular. Esa es la dirección que les pasa a los encargados (puede convertirla en un código QR).
+6. Ábrala en la computadora. Esa es la dirección que le pasa al personal de apoyo.
 
 > Si los archivos están en otra rama (por ejemplo la rama donde se desarrolló), primero únalos a `main` (Pull request → Merge) o elija esa rama en el paso 4.
 
@@ -121,9 +122,9 @@ La página usa la misma línea gráfica del congreso (Montserrat, azul marino, n
 
 ## 6. Uso diario: cambios desde la hoja
 
-Todo se cambia **en la hoja**; en el celular basta tocar **↻ Recargar** (o esperar: la vista se actualiza sola cada 60 segundos).
+Todo se cambia **en la hoja**; en la página basta tocar **↻** arriba a la derecha (o esperar: los datos se actualizan solos cada 60 segundos).
 
-- **Cambiar un PIN:** hoja `Salones`, columna `PIN_encargado`. Quien estaba adentro con el PIN viejo tendrá que volver a entrar.
+- **Cambiar el PIN de administrador:** hoja `Config`, fila `PIN_admin`. Quien estaba en el panel tendrá que volver a entrar.
 - **Agregar o corregir un correo:** hoja `Actividades`, columna `Correo`. Si hay varios expositores, separe con ` / ` en el mismo orden que en `Expositor` (ej.: `ana@x.com / juan@y.com`). Si la cantidad de correos no coincide con la de expositores, el sistema no adivina a quién pertenece cada uno y los muestra aparte como "Correos: …".
 - **Confirmar un expositor pendiente:** escriba el nombre en `Expositor`, el código en `Codigo_medico` y cambie `Estado` a `CONFIRMADO`.
 - **Agregar una charla:** agregue una fila al final de `Actividades` con:
@@ -136,7 +137,7 @@ Todo se cambia **en la hoja**; en el celular basta tocar **↻ Recargar** (o esp
   - Deje vacías `Asistentes`, `Registrado_por` y `Fecha_registro`.
 - **Quitar una charla:** borre su fila completa.
 - **Mover o agregar columnas:** se puede. El sistema busca las columnas por el nombre del encabezado, así que **no cambie los nombres** de los encabezados.
-- **Corregir un número de asistencia:** mejor hágalo desde el panel de administrador (queda en la bitácora). Si lo cambia directo en la hoja también funciona, pero no queda registro en la bitácora y en el celular aparecerá como "editado en la hoja".
+- **Corregir un número de asistencia:** mejor hágalo desde el panel de administrador (queda en la bitácora). Si lo cambia directo en la hoja también funciona, pero no queda registro en la bitácora y en la página aparecerá como "Editado en la hoja".
 
 El sistema **solo escribe** en `Asistentes`, `Registrado_por`, `Fecha_registro`, en la hoja `Bitacora` y en `Config → Bloquear_edicion`. Nunca modifica las demás columnas.
 
@@ -152,25 +153,29 @@ Cada vez que modifique `Code.gs` en el editor de Apps Script, los cambios **no s
 La URL se mantiene igual, así que no hay que tocar `app.js`.
 ⚠ **No use "Nueva implementación"** para actualizar: eso crea una URL distinta y la página dejaría de funcionar hasta que cambie `API_URL`.
 
-Si cambia `index.html`, `styles.css` o `app.js` en GitHub, GitHub Pages se actualiza solo en 1–2 minutos (en el celular puede requerir recargar).
+Si cambia `index.html`, `styles.css` o `app.js` en GitHub, GitHub Pages se actualiza solo en 1–2 minutos (puede requerir recargar la página).
 
 ## 8. Cómo se usa
 
-**Encargado de salón**
-1. Abre la página, toca su salón y escribe el PIN. No hay que volver a escribirlo mientras no cierre la pestaña.
-2. Se abre el día de hoy (si su salón tiene charlas ese día). Los días sin charlas aparecen en gris.
-3. Cada charla tiene un campo grande: escribe el número y toca **Guardar**. Queda en verde: "Guardado 10:42 a.m. por Real 1".
-4. Si no hay señal, la tarjeta se pone en rojo, **el número se conserva** y puede tocar **Guardar** otra vez para reintentar. También puede llenar varias y usar **Guardar todo**.
-5. Si se equivocó, cambie el número y guarde de nuevo: se permite, y queda en la bitácora.
+**Personal de apoyo** (en computadora)
+1. Abra la página. Arriba, en **Registra**, escriba su nombre (se recuerda en esa computadora).
+2. Arriba están los días; se abre solo el día de hoy. A la izquierda, todos los salones con su avance ("4/15") y cuántas charlas **atrasadas** tienen (ya terminaron y no tienen número).
+3. Toque un salón: a la derecha aparecen sus charlas, agrupadas por simposio. El cursor queda en la primera charla sin número.
+4. Escriba el número y presione **Enter**: se guarda y el cursor pasa a la siguiente. La fila queda con "✓ 10:42 a.m. · Ana Mora".
+   - **↑ / ↓** para moverse entre charlas · **Esc** deshace lo escrito · **Ctrl+S** guarda todo lo pendiente (de todos los salones).
+5. "**En curso**" marca la charla que está ocurriendo ahora; "**Ya terminó**" (naranja) las que ya pasaron sin número.
+6. Si se cae la conexión, la fila se pone en roja, **el número se conserva** y se reintenta con **Enter** o el botón **Guardar** de la fila.
+7. Si se equivocó, cambie el número y guarde de nuevo: se permite, y queda en la bitácora.
+8. El cuadro **Buscar** filtra salones por nombre o por charla/expositor.
 
-**Administrador** (botón discreto "Administrador" al pie de la pantalla de inicio)
+**Administrador** (botón **Administración** arriba a la derecha; pide `PIN_admin`)
 - **Totales** por día, por salón y por simposio, más el total general. Respetan los filtros.
 - **Charlas**: tabla completa con filtros (día, salón, estado, "solo sin registrar", búsqueda). Puede corregir cualquier número; dejar el campo vacío y guardar borra el registro.
-- **Sin registrar y ya pasaron**: la lista para perseguir a los encargados.
+- **Sin registrar y ya pasaron**: la lista de charlas atrasadas.
 - **Bitácora**: todos los cambios, del más reciente al más antiguo.
 - **Exportar CSV**: descarga lo que está viendo (con los filtros aplicados).
 - **Bloquear / Desbloquear edición** y **Abrir Google Sheet**.
-- Con el PIN de administrador también puede entrar a cualquier salón como si fuera el encargado.
+- **Cerrar sesión** y **← Volver al registro**.
 
 ## 9. Problemas frecuentes
 
@@ -178,9 +183,9 @@ Si cambia `index.html`, `styles.css` o `app.js` en GitHub, GitHub Pages se actua
 |---|---|
 | Barra roja "Falta configurar la URL del Apps Script" | Falta el paso 5 (poner la URL en `app.js`). |
 | "Respuesta inesperada del servidor" | La implementación no tiene acceso "Cualquier persona", o la URL no es la que termina en `/exec`. |
-| "El salón X no tiene PIN configurado" | En `Salones` el PIN sigue en `CAMBIAR` o vacío. |
-| "Demasiados intentos con PIN incorrecto" | Tras 15 PINes errados seguidos en un salón, el ingreso a ese salón se pausa 5 minutos. Quien ya estaba adentro sigue trabajando normalmente. |
-| "El PIN cambió. Vuelva a ingresarlo." | Se cambió el PIN en la hoja; el encargado debe ingresar el nuevo. |
+| "PIN de administrador incorrecto" | Revise `Config → PIN_admin` (con `CAMBIAR` no funciona). |
+| "Demasiados intentos con PIN incorrecto" | Tras 15 PINes errados seguidos, el ingreso al panel se pausa 5 minutos. |
+| "El PIN cambió. Vuelva a ingresarlo." | Se cambió `PIN_admin` en la hoja; vuelva a entrar al panel. |
 | "Falta la columna … en la hoja …" | Se renombró o borró un encabezado. Restáurelo. |
 | El día de "hoy" no se selecciona o la lista de atrasadas está rara | Revise `Config → Fecha_inicio` (paso 2). |
 | Al probar la URL sale `"Use POST para esta acción."` | Es la primera versión de `Code.gs`. Pegue el `Code.gs` actual y publique una nueva versión (paso 7). |
@@ -189,11 +194,12 @@ Si cambia `index.html`, `styles.css` o `app.js` en GitHub, GitHub Pages se actua
 
 ## 10. Seguridad y privacidad
 
-- Los PINes se validan **en el servidor**; la página nunca recibe la lista de PINes. Al entrar, el servidor entrega una sesión firmada que dura 18 horas y solo sirve para ese salón.
-- Un encargado solo puede guardar en las charlas de **su** salón: el servidor rechaza cualquier otra.
-- Todas las escrituras usan `LockService`, así que varios encargados pueden guardar a la vez sin pisarse.
+- **El registro no pide PIN.** Cualquiera que tenga la dirección de la página puede anotar números, así que compártala solo con el personal de apoyo. Cada cambio queda en la `Bitacora` con el nombre escrito en "Registra", y el administrador puede corregir o bloquear la edición en cualquier momento.
+- El personal de apoyo **no puede borrar** un registro (solo cambiarlo); borrar es solo del administrador.
+- El PIN de administrador se valida **en el servidor**; la página nunca recibe los PINes. Al entrar, el servidor entrega una sesión firmada que dura 18 horas.
+- Todas las escrituras usan `LockService`, así que varias personas pueden guardar a la vez sin pisarse.
 - **No suba el Excel ni datos de expositores a este repositorio**: el repositorio de GitHub Pages es público. El archivo `.gitignore` ya excluye los `.xlsx`.
-- Use PINes distintos por salón y un PIN de administrador largo (6 dígitos o más).
+- Use un PIN de administrador largo (6 dígitos o más).
 
 ## 11. Pruebas (para personal técnico)
 
@@ -202,8 +208,8 @@ La carpeta `pruebas/` contiene un simulador de Apps Script en Node.js que ejecut
 ```bash
 pip install openpyxl
 python3 pruebas/xlsx_a_json.py BD_Asistencia_CMN2026.xlsx pruebas/datos_prueba.json
-node pruebas/test_backend.js                         # 27 pruebas de la lógica del servidor
+node pruebas/test_backend.js                         # 31 pruebas de la lógica del servidor
 NODE_PATH=$(npm root -g) node pruebas/test_ui.js     # requiere playwright instalado
 ```
 
-Entre otras cosas verifican: que Roble 2 el martes muestra sus 4 simposios en orden, que una charla PENDIENTE se ve con su etiqueta y se puede registrar, que el PIN de otro salón es rechazado, que un encargado no puede guardar en otro salón, que se interpretan los 52 formatos de hora distintos del Excel y que el sistema sigue funcionando si se mueven columnas o filas.
+Entre otras cosas verifican: que Roble 2 el martes muestra sus 4 simposios en orden, que una charla PENDIENTE se ve con su etiqueta y se puede registrar, que se puede registrar sin PIN y queda quién lo hizo, que el panel de administración sí exige PIN, que se interpretan los 52 formatos de hora distintos del Excel y que el sistema sigue funcionando si se mueven columnas o filas.

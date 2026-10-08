@@ -282,6 +282,50 @@ prueba('Cambios hechos a mano en la hoja se ven en la siguiente lectura', () => 
   assert.strictEqual(a.expositores.personas[0].correo, 'nuevo@correo.cr');
 });
 
+console.log('\n4b) Personal de apoyo (sin PIN)');
+prueba('getTodo: 527 charlas de los salones activos, sin PINes, en una sola petición', () => {
+  const g = entornoConPines();
+  const r = g.post({ accion: 'getTodo' });
+  assert.ok(r.ok, r.error);
+  assert.strictEqual(r.actividades.length, 527);
+  assert.strictEqual(r.salones.length, 10);
+  const txt = JSON.stringify(r);
+  Object.values(PINES).concat([PIN_ADMIN]).forEach((p) => assert.ok(!txt.includes('"' + p + '"'), 'aparece PIN ' + p));
+  g.hojas.Salones.find((f) => f[0] === 'Laurel 1')[3] = false;
+  const r2 = g.post({ accion: 'getTodo' });
+  assert.ok(!r2.actividades.some((a) => a.salon === 'Laurel 1'), 'un salón inactivo no debe aparecer');
+});
+prueba('Sin PIN se puede guardar en cualquier salón; queda el nombre de quien registró', () => {
+  const g = entornoConPines();
+  g.fijarAhora('2026-11-10T16:42:00Z');
+  const r1 = g.post({ accion: 'guardarAsistencia', id: 'ACT-0001', valor: '25', usuario: '  Ana   Mora ' });
+  assert.ok(r1.ok, r1.error);
+  assert.strictEqual(r1.actividad.registradoPor, 'Ana Mora');
+  const r2 = g.post({ accion: 'guardarAsistencia', id: 'ACT-0165', valor: '30' });
+  assert.ok(r2.ok, r2.error);
+  assert.strictEqual(r2.actividad.registradoPor, 'Roble 2', 'sin nombre se anota el salón');
+  assert.deepStrictEqual(plano(g.hojas.Bitacora.slice(1).map((f) => [f[1], f[2], f[3]])),
+    [['Ana Mora', 'Cedro 1', 'ACT-0001'], ['Personal de apoyo', 'Roble 2', 'ACT-0165']]);
+  const r3 = g.post({ accion: 'guardarAsistencia', id: 'ACT-0002', valor: '1', usuario: '=HYPERLINK("x")' });
+  assert.ok(r3.ok);
+  assert.ok(String(g.hojas.Bitacora[3][1]).startsWith("'="), 'un nombre que empieza con = no debe quedar como fórmula');
+});
+prueba('Personal de apoyo: no puede borrar registros ni guardar con la edición bloqueada', () => {
+  const g = entornoConPines();
+  assert.ok(g.post({ accion: 'guardarAsistencia', id: 'ACT-0003', valor: '9' }).ok);
+  assert.strictEqual(g.post({ accion: 'guardarAsistencia', id: 'ACT-0003', valor: '' }).ok, false);
+  const tA = tokenDe(g, '', PIN_ADMIN);
+  g.post({ accion: 'setBloqueo', valor: 'SI', token: tA });
+  const r = g.post({ accion: 'guardarLote', items: [{ id: 'ACT-0004', valor: '3' }] });
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.codigo, 'BLOQUEADO');
+});
+prueba('Token falso enviado sin PIN real se rechaza (no cae a "personal de apoyo")', () => {
+  const g = entornoConPines();
+  const r = g.post({ accion: 'guardarAsistencia', id: 'ACT-0005', valor: '2', token: 'x|admin|y|9999999999999|firma' });
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.codigo, 'SESION');
+  assert.strictEqual(g.post({ accion: 'getResumenAdmin' }).ok, false, 'el panel admin sigue pidiendo PIN');
+});
+
 console.log('\n5) Bloqueo y administración');
 prueba('Bloquear_edicion = SI: encargado no guarda, admin sí; solo admin cambia el bloqueo', () => {
   const g = entornoConPines();

@@ -3,6 +3,9 @@
      En Apps Script se pega únicamente Code.gs.
    =========================================================================
    CMN 2026 — Registro de asistencia por charla (frontend)
+   Pensado para computadora: lista de salones a la izquierda y tabla de
+   charlas a la derecha. Lo usa el personal de apoyo (sin PIN).
+   El panel de administración sí pide el PIN de administrador.
    HTML + CSS + JavaScript puro. Todos los datos vienen de la hoja de Google
    a través del Apps Script publicado como aplicación web.
    ========================================================================= */
@@ -11,25 +14,28 @@
 // Es lo ÚNICO que hay que cambiar en este archivo.
 const API_URL = 'https://script.google.com/macros/s/AKfycbwO7EsIIo6AlRPD4Kwn1CTui--G04Trrb4LD0yQzVtq099P7RsNBii5UB_v6mSBplOJ/exec';
 
-const REFRESCO_MS = 60 * 1000;   // la vista se actualiza sola cada 60 s
+const REFRESCO_MS = 60 * 1000;   // los datos se actualizan solos cada 60 s
 const TIMEOUT_MS = 30 * 1000;    // tiempo máximo de espera por respuesta
 const CLAVE_SESION = 'cmn2026_sesion';
+const CLAVE_NOMBRE = 'cmn2026_nombre';
+const CLAVE_ULTIMO = 'cmn2026_ultimo_salon';
 const ZONA = 'America/Costa_Rica';
 
 // ---------------------------------------------------------------------------
 //  Estado de la aplicación
 // ---------------------------------------------------------------------------
 const estado = {
-  inicio: null,            // respuesta de getSalones
-  salonClave: null,        // salón abierto (normalizado)
-  salon: null,             // respuesta de getActividades
-  firmaSalon: '',
+  datos: null,             // respuesta de getTodo (todas las charlas)
+  firma: '',               // para saber si algo cambió al refrescar
   dia: null,               // día seleccionado
+  salon: null,             // salón seleccionado
+  buscar: '',
   borradores: new Map(),   // id → texto escrito y no guardado
   errores: new Map(),      // id → mensaje de error del último intento
   guardando: new Set(),    // ids que se están guardando
-  renderPendiente: false,  // llegaron datos nuevos mientras el usuario escribía
+  renderPendiente: false,  // llegaron datos nuevos mientras alguien escribía
   ultimaCarga: 0,
+  avisoNombre: false,
   admin: null,             // respuesta de getResumenAdmin
   admTab: 'totales',
   bitacora: null,
@@ -68,7 +74,17 @@ function fechaHora(iso) {
 function horaActual() {
   return new Date().toLocaleTimeString('es-CR', { timeZone: ZONA, hour: 'numeric', minute: '2-digit', hour12: true });
 }
+/** Minutos desde medianoche, hora de Costa Rica. */
+function minutosAhora() {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: ZONA, hour: '2-digit', minute: '2-digit', hour12: false })
+    .formatToParts(new Date());
+  const h = Number(p.find((x) => x.type === 'hour').value) % 24;
+  return h * 60 + Number(p.find((x) => x.type === 'minute').value);
+}
 function errorApp(mensaje, codigo) { const e = new Error(mensaje); e.codigo = codigo || 'ERROR'; return e; }
+function leerLocal(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+function guardarLocal(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* modo privado */ } }
+const punteroFino = () => window.matchMedia && window.matchMedia('(pointer: fine)').matches;
 
 let toastTimer = null;
 function toast(msg, tipo) {
@@ -81,41 +97,25 @@ function toast(msg, tipo) {
 }
 
 // ---------------------------------------------------------------------------
-//  Sesión (sessionStorage: dura mientras la pestaña esté abierta)
+//  Sesión de administrador (sessionStorage: dura mientras la pestaña esté abierta)
 // ---------------------------------------------------------------------------
 const Sesion = {
-  _memoria: { salones: {}, admin: null },
-  leer() {
-    try {
-      const s = JSON.parse(sessionStorage.getItem(CLAVE_SESION) || 'null');
-      return s && s.salones ? s : { salones: {}, admin: null };
-    } catch (e) { return this._memoria; }
+  _memoria: null,
+  admin() {
+    try { const s = JSON.parse(sessionStorage.getItem(CLAVE_SESION) || 'null'); return s && s.admin ? s.admin : null; } catch (e) { return this._memoria; }
   },
-  escribir(s) {
-    this._memoria = s;
-    try { sessionStorage.setItem(CLAVE_SESION, JSON.stringify(s)); } catch (e) { /* modo privado */ }
+  guardarLogin(r) {
+    this._memoria = { token: r.token };
+    try { sessionStorage.setItem(CLAVE_SESION, JSON.stringify({ admin: this._memoria })); } catch (e) { /* modo privado */ }
   },
-  /** Token para un salón: el propio del salón o, si existe, el del administrador. */
-  deSalon(salon) {
-    const s = this.leer();
-    return s.salones[norm(salon)] || (s.admin ? { token: s.admin.token, rol: 'admin' } : null);
-  },
-  admin() { return this.leer().admin; },
-  guardarLogin(r, salon) {
-    const s = this.leer();
-    if (r.rol === 'admin') s.admin = { token: r.token };
-    else s.salones[norm(salon)] = { token: r.token, rol: 'encargado', salon: r.salon };
-    this.escribir(s);
-  },
-  olvidarToken(token) {
-    const s = this.leer();
-    if (s.admin && s.admin.token === token) s.admin = null;
-    Object.keys(s.salones).forEach((k) => { if (s.salones[k].token === token) delete s.salones[k]; });
-    this.escribir(s);
-  },
-  hayAlguna() { const s = this.leer(); return !!s.admin || Object.keys(s.salones).length > 0; },
-  borrarTodo() { this.escribir({ salones: {}, admin: null }); }
+  olvidarToken() {
+    this._memoria = null;
+    try { sessionStorage.removeItem(CLAVE_SESION); } catch (e) { /* modo privado */ }
+  }
 };
+
+/** Nombre de quien registra (se recuerda en esta computadora). */
+function nombreUsuario() { return $('inpNombre').value.trim(); }
 
 // ---------------------------------------------------------------------------
 //  Comunicación con el Apps Script
@@ -142,8 +142,8 @@ async function api(accion, datos) {
     });
   } catch (e) {
     throw errorApp(e.name === 'AbortError'
-      ? 'El servidor tardó demasiado. Revise la señal e intente de nuevo.'
-      : 'Sin conexión con el servidor. Revise la señal e intente de nuevo.', 'RED');
+      ? 'El servidor tardó demasiado. Revise la conexión e intente de nuevo.'
+      : 'Sin conexión con el servidor. Revise la conexión e intente de nuevo.', 'RED');
   } finally {
     clearTimeout(timer);
   }
@@ -153,7 +153,7 @@ async function api(accion, datos) {
     throw errorApp('Respuesta inesperada del servidor. Verifique que la app web esté publicada con acceso "Cualquier persona".', 'RED');
   }
   if (json && json.codigo === 'SESION' && datos && datos.token) {
-    Sesion.olvidarToken(datos.token);
+    Sesion.olvidarToken();
     setTimeout(() => { toast(json.error, 'err'); ruta(); }, 0);
   }
   return json;
@@ -167,255 +167,175 @@ async function apiOk(accion, datos) {
 }
 
 // ---------------------------------------------------------------------------
-//  Navegación (#/  ·  #/salon/Real%201/Martes  ·  #/admin)
+//  Navegación (#/s/Real%201/Martes  ·  #/admin)
 // ---------------------------------------------------------------------------
 function ir(hash) {
   if (location.hash === hash) ruta(); else location.hash = hash;
 }
-function hashSalon(salon, dia) {
-  return '#/salon/' + encodeURIComponent(salon) + (dia ? '/' + encodeURIComponent(dia) : '');
+function hashRegistro() {
+  return '#/s/' + encodeURIComponent(estado.salon || '') + '/' + encodeURIComponent(estado.dia || '');
 }
+function fijarHash() { history.replaceState(null, '', hashRegistro()); }
 
 function ruta() {
   const partes = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
-  if (partes[0] === 'salon' && partes[1]) return mostrarSalon(partes[1], partes[2]);
   if (partes[0] === 'admin') return mostrarAdmin();
-  return mostrarInicio();
+  if ((partes[0] === 's' || partes[0] === 'salon') && partes[1]) return mostrarRegistro(partes[1], partes[2]);
+  return mostrarRegistro();
 }
 
-function mostrarVista(id, titulo, subtitulo, conVolver) {
+function mostrarVista(id) {
   estado.vista = id;
-  ['vInicio', 'vPin', 'vSalon', 'vAdmin'].forEach((v) => { $(v).hidden = v !== id; });
-  $('app').classList.toggle('ancho', id === 'vAdmin');
-  $('top').classList.toggle('compacto', id !== 'vInicio');
-  $('top').classList.toggle('ancho', id === 'vAdmin');
-  $('kicker').textContent = (estado.inicio && estado.inicio.evento) || 'Congreso Médico Nacional 2026';
-  $('tituloEvento').textContent = titulo || 'Asistencia';
-  $('subtitulo').textContent = subtitulo || '';
-  if (id !== 'vInicio') $('chips').innerHTML = '';
-  $('btnVolver').hidden = !conVolver;
-  $('btnSalir').hidden = !(Sesion.hayAlguna() && id !== 'vPin');
-  $('cargando').hidden = true;
-  document.title = (titulo ? titulo + ' · ' : '') + 'Asistencia CMN 2026';
+  ['vRegistro', 'vPin', 'vAdmin'].forEach((v) => { $(v).hidden = v !== id; });
+  $('mainSolo').hidden = id === 'vRegistro';
+  $('dias').hidden = id !== 'vRegistro';
+  $('btnAdmin').hidden = id !== 'vRegistro';
+  $('btnVolver').hidden = id === 'vRegistro';
+  document.body.classList.toggle('modo-admin', id !== 'vRegistro');
+  document.title = (id === 'vRegistro' ? 'Asistencia' : 'Administración') + ' · CMN 2026';
 }
 function cargando(si) { $('cargando').hidden = !si; }
 function mostrarError(id, msg) { const el = $(id); el.textContent = msg || ''; el.hidden = !msg; }
 
-// ---------------------------------------------------------------------------
-//  Pantalla 1: inicio
-// ---------------------------------------------------------------------------
-async function mostrarInicio() {
-  mostrarVista('vInicio', null, 'Registro de asistentes por charla. Toque su salón y anote cuántas personas hubo en cada charla.', false);
-  mostrarError('errorInicio', '');
-  if (estado.inicio) renderInicio(); else cargando(true);
-  try {
-    estado.inicio = await apiOk('getSalones');
-    if (estado.vista === 'vInicio') { $('kicker').textContent = estado.inicio.evento; renderInicio(); }
-  } catch (e) {
-    mostrarError('errorInicio', e.message);
-  } finally {
-    cargando(false);
-  }
-}
-
-function renderInicio() {
-  const r = estado.inicio;
-  $('bloqueoInicio').hidden = !r.bloqueo;
-  const total = r.salones.reduce((n, s) => n + s.total, 0);
-  const reg = r.salones.reduce((n, s) => n + s.registradas, 0);
-  $('chips').innerHTML = [`<b>${r.salones.length}</b> salones`, `<b>${total}</b> charlas`, `<b>${reg}</b> registradas`,
-    r.hoy ? `Hoy: <b>${esc(r.hoy)}</b>` : `<b>${r.dias.length}</b> días`]
-    .map((x) => `<span class="chip">${x}</span>`).join('');
-  const pista = $('gridSalones');
-  const posicion = pista.scrollLeft; // al refrescar no se pierde el lugar del carrusel
-  pista.innerHTML = r.salones.length ? r.salones.map((s, i) => {
-    const pct = s.total ? Math.round((s.registradas / s.total) * 100) : 0;
-    const dias = r.dias.map((d) => {
-      const tiene = (s.dias || []).some((x) => norm(x) === norm(d));
-      const cls = !tiene ? 'no' : (norm(d) === norm(r.hoy) ? 'hoy' : '');
-      return `<span class="${cls}" title="${esc(d)}${tiene ? '' : ': sin charlas'}">${esc(String(d).slice(0, 3))}</span>`;
-    }).join('');
-    return `<button type="button" class="tarjeta-salon${s.total && pct === 100 ? ' completo' : ''}" data-salon="${esc(s.salon)}"
-        aria-roledescription="diapositiva" aria-label="${esc(s.salon)}, ${i + 1} de ${r.salones.length}">
-        <span class="ph"><small>Salón</small><span class="nombre">${esc(s.salon)}</span><span class="pct">${pct}%</span></span>
-        <span class="bd">
-          <span class="avance">${s.registradas} / ${s.total} charlas registradas</span>
-          <span class="bar" aria-hidden="true"><i style="width:${pct}%"></i></span>
-          <span class="dias-mini" aria-hidden="true">${dias}</span>
-          <span class="entrar">Entrar →</span>
-        </span>
-      </button>`;
-  }).join('') : '<p class="vacio">No hay salones activos en la hoja "Salones".</p>';
-  $('carNav').hidden = r.salones.length < 2;
-  $('carPuntos').innerHTML = r.salones.map((s, i) =>
-    `<button type="button" class="car-punto" data-i="${i}" aria-label="Ir a ${esc(s.salon)}"></button>`).join('');
-  if (!carrusel.iniciado) {
-    // Primera vez: mostrar el último salón usado en esta pestaña.
-    carrusel.iniciado = true;
-    const ult = leerUltimoSalon();
-    const i = r.salones.findIndex((s) => norm(s.salon) === norm(ult));
-    if (i > 0) requestAnimationFrame(() => carrusel.ir(i, false));
-  } else {
-    pista.style.scrollBehavior = 'auto';
-    pista.scrollLeft = posicion;
-    pista.style.scrollBehavior = '';
-  }
-  carrusel.actualizar();
-}
-
-// ---------- Carrusel de salones ----------
-const carrusel = {
-  iniciado: false,
-  tarjetas() { return [...$('gridSalones').querySelectorAll('.tarjeta-salon')]; },
-  /** Índice de la primera tarjeta visible. */
-  actual() {
-    const pista = $('gridSalones');
-    const ts = this.tarjetas();
-    if (!ts.length) return 0;
-    const base = ts[0].offsetLeft;
-    let mejor = 0;
-    ts.forEach((t, i) => {
-      if (Math.abs(t.offsetLeft - base - pista.scrollLeft) < Math.abs(ts[mejor].offsetLeft - base - pista.scrollLeft)) mejor = i;
-    });
-    return mejor;
-  },
-  /** Cuántas tarjetas caben completas en pantalla. */
-  visibles() {
-    const ts = this.tarjetas();
-    if (ts.length < 2) return 1;
-    const paso = ts[1].offsetLeft - ts[0].offsetLeft;
-    return Math.max(1, Math.floor(($('gridSalones').clientWidth - 16) / paso));
-  },
-  ir(i, suave) {
-    const ts = this.tarjetas();
-    if (!ts.length) return;
-    i = Math.max(0, Math.min(i, ts.length - 1));
-    $('gridSalones').scrollTo({ left: ts[i].offsetLeft - ts[0].offsetLeft, behavior: suave === false ? 'auto' : 'smooth' });
-  },
-  mover(dir) { this.ir(this.actual() + dir * this.visibles()); },
-  actualizar() {
-    const pista = $('gridSalones');
-    const ts = this.tarjetas();
-    const i = this.actual();
-    const v = this.visibles();
-    document.querySelectorAll('#carPuntos .car-punto').forEach((p, k) => p.setAttribute('aria-current', String(k >= i && k < i + v)));
-    $('carPrev').disabled = pista.scrollLeft < 4;
-    $('carNext').disabled = pista.scrollLeft + pista.clientWidth >= pista.scrollWidth - 4 || ts.length < 2;
-  }
-};
-
-function leerUltimoSalon() { try { return sessionStorage.getItem('cmn2026_ultimo') || ''; } catch (e) { return ''; } }
-function guardarUltimoSalon(s) { try { sessionStorage.setItem('cmn2026_ultimo', s); } catch (e) { /* sin almacenamiento */ } }
-
-// ---------------------------------------------------------------------------
-//  Pantalla 2: PIN
-// ---------------------------------------------------------------------------
-let pinSalon = null; // null = administrador
-
-function mostrarPin(salon) {
-  pinSalon = salon;
-  mostrarVista('vPin', salon || 'Administrador', salon ? 'Ingrese el PIN del salón' : 'Ingrese el PIN de administrador', true);
-  $('pinTitulo').textContent = salon || 'Administrador';
-  $('inpPin').value = '';
-  mostrarError('errorPin', '');
-  setTimeout(() => $('inpPin').focus(), 50);
-}
-
-async function enviarPin(ev) {
-  ev.preventDefault();
-  const pin = $('inpPin').value.trim();
-  if (!pin) return mostrarError('errorPin', 'Escriba el PIN.');
-  const btn = $('btnEntrar');
-  btn.disabled = true; btn.textContent = 'Verificando…';
-  mostrarError('errorPin', '');
-  try {
-    const r = await apiOk('login', { salon: pinSalon || '', pin });
-    Sesion.guardarLogin(r, pinSalon);
-    $('inpPin').value = '';
-    ruta();
-  } catch (e) {
-    mostrarError('errorPin', e.message);
-    $('inpPin').select();
-  } finally {
-    btn.disabled = false; btn.textContent = 'Entrar';
-  }
-}
-
-// ---------------------------------------------------------------------------
-//  Pantallas 3 y 4: días y actividades del salón
-// ---------------------------------------------------------------------------
-async function mostrarSalon(nombre, dia) {
-  const ses = Sesion.deSalon(nombre);
-  if (!ses) return mostrarPin(nombre);
-
-  const clave = norm(nombre);
-  guardarUltimoSalon(nombre);
-  if (estado.salonClave !== clave) {
-    estado.salonClave = clave;
-    estado.salon = null;
-    estado.firmaSalon = '';
-    estado.dia = null;
-  }
-  if (dia) estado.dia = dia;
-  mostrarVista('vSalon', nombre, ses.rol === 'admin' ? 'Modo administrador · puede corregir cualquier charla' : 'Anote los asistentes de cada charla y toque Guardar.', true);
-  mostrarError('errorSalon', '');
-  if (estado.salon) renderSalon(); else { $('listaActividades').innerHTML = ''; $('tabsDias').innerHTML = ''; cargando(true); }
-  await cargarSalon(false);
-}
-
-function tokenSalon() {
-  const s = estado.salon ? estado.salon.salon : estado.salonClave;
-  const ses = Sesion.deSalon(s);
-  return ses ? ses.token : '';
-}
-
-async function cargarSalon(silencioso) {
-  const nombre = estado.salon ? estado.salon.salon : decodeURIComponent((location.hash.split('/')[2] || ''));
-  const clave = estado.salonClave;
-  const token = tokenSalon();
-  if (!token) return;
-  try {
-    const r = await apiOk('getActividades', { salon: nombre, token });
-    if (estado.salonClave !== clave) return; // el usuario ya cambió de salón
-    estado.ultimaCarga = Date.now();
-    estado.salon = r;
-    elegirDia();
-    const firma = JSON.stringify([r.actividades, r.bloqueo, r.puedeGuardar, r.dias, estado.dia]);
-    $('actualizado').textContent = 'Actualizado a las ' + horaActual();
-    if (silencioso && firma === estado.firmaSalon) return;
-    estado.firmaSalon = firma;
-    if (estado.vista !== 'vSalon') return;
-    if (silencioso && escribiendo()) { estado.renderPendiente = true; return; }
-    renderSalon();
-  } catch (e) {
-    if (silencioso) {
-      $('actualizado').textContent = 'No se pudo actualizar (' + e.message + ') Se reintentará.';
-    } else {
-      mostrarError('errorSalon', e.message);
-    }
-  } finally {
-    cargando(false);
-  }
-}
-
-/** ¿El usuario tiene el cursor en un campo de asistencia? */
+/** ¿Hay alguien escribiendo en un campo de asistentes? */
 function escribiendo() {
   const a = document.activeElement;
-  return !!(a && a.tagName === 'INPUT' && (a.closest('#listaActividades') || a.closest('#vAdmin')));
+  return !!(a && a.tagName === 'INPUT' && (a.dataset.id || a.dataset.aid));
 }
 
-function elegirDia() {
-  const r = estado.salon;
-  const activos = r.dias.filter((d) => d.activo).map((d) => d.dia);
-  const actual = activos.find((d) => norm(d) === norm(estado.dia));
-  if (actual) { estado.dia = actual; return; }
-  const hoy = activos.find((d) => norm(d) === norm(r.hoy));
-  estado.dia = hoy || activos[0] || null;
+// ---------------------------------------------------------------------------
+//  Registro: datos
+// ---------------------------------------------------------------------------
+async function mostrarRegistro(salon, dia) {
+  mostrarVista('vRegistro');
+  if (salon) estado.salon = salon;
+  if (dia) estado.dia = dia;
+  if (estado.datos) { elegirSalonYDia(); renderTodo(); } else cargando(true);
+  await cargarDatos(false);
 }
 
-function actividadesDelDia() {
-  if (!estado.salon) return [];
-  return estado.salon.actividades.filter((a) => norm(a.dia) === norm(estado.dia));
+async function cargarDatos(silencioso) {
+  try {
+    const r = await apiOk('getTodo');
+    estado.datos = r;
+    estado.ultimaCarga = Date.now();
+    $('actualizado').textContent = horaActual();
+    $('evento').textContent = r.evento;
+    mostrarError('errorRegistro', '');
+    const firma = JSON.stringify([r.actividades, r.bloqueo, r.dias, r.salones]);
+    const cambio = firma !== estado.firma;
+    estado.firma = firma;
+    if (estado.vista !== 'vRegistro') return;
+    elegirSalonYDia();
+    if (silencioso && !cambio) { renderLateral(); renderDias(); return; }  // solo refresca "ya terminó"
+    if (silencioso) {
+      renderDias(); renderLateral(); renderAvisos();
+      if (!parchearTabla()) {
+        if (escribiendo()) estado.renderPendiente = true; else renderTabla();
+      }
+      actualizarResumen();
+      return;
+    }
+    renderTodo();
+  } catch (e) {
+    if (silencioso) $('actualizado').textContent = 'sin conexión';
+    else mostrarError('errorRegistro', e.message);
+  } finally {
+    cargando(false);
+  }
+}
+
+/** Valida el salón y día elegidos; si no sirven, elige unos razonables. */
+function elegirSalonYDia() {
+  const r = estado.datos;
+  const diasConCharlas = r.dias.filter((d) => r.actividades.some((a) => norm(a.dia) === norm(d)));
+  const dia = diasConCharlas.find((d) => norm(d) === norm(estado.dia)) ||
+    diasConCharlas.find((d) => norm(d) === norm(r.hoy)) || diasConCharlas[0] || r.dias[0] || null;
+  estado.dia = dia;
+  const nombres = r.salones.map((s) => s.salon);
+  const buscarSalon = (n) => nombres.find((x) => norm(x) === norm(n));
+  estado.salon = buscarSalon(estado.salon) || buscarSalon(leerLocal(CLAVE_ULTIMO)) ||
+    nombres.find((n) => actsDe(n, dia).length) || nombres[0] || null;
+}
+
+function actsDe(salon, dia) {
+  if (!estado.datos) return [];
+  return estado.datos.actividades.filter((a) => norm(a.salon) === norm(salon) && norm(a.dia) === norm(dia));
+}
+function actividad(id) { return estado.datos && estado.datos.actividades.find((a) => a.id === id); }
+function puedeGuardar() { return !!estado.datos && !estado.datos.bloqueo; }
+
+/** ¿Ya terminó y no tiene asistencia? (en vivo para el día de hoy) */
+function yaTermino(a) {
+  if (a.asistentes != null) return false;
+  if (a.atrasada) return true;
+  const r = estado.datos;
+  return norm(a.dia) === norm(r.hoy) && a.fin != null && a.fin <= minutosAhora();
+}
+function enCurso(a) {
+  const r = estado.datos;
+  if (norm(a.dia) !== norm(r.hoy) || a.inicio == null) return false;
+  const m = minutosAhora();
+  return a.inicio <= m && m < (a.fin != null ? a.fin : a.inicio + 20);
+}
+
+// ---------------------------------------------------------------------------
+//  Registro: dibujo
+// ---------------------------------------------------------------------------
+function renderTodo() {
+  renderDias();
+  renderLateral();
+  renderAvisos();
+  renderTabla();
+}
+
+function renderAvisos() {
+  $('avisoBloqueo').hidden = !(estado.datos && estado.datos.bloqueo);
+}
+
+/** Días: botones arriba, con registradas / total de todo el congreso ese día. */
+function renderDias() {
+  const r = estado.datos;
+  $('dias').innerHTML = r.dias.map((d) => {
+    const acts = r.actividades.filter((a) => norm(a.dia) === norm(d));
+    const reg = acts.filter((a) => a.asistentes != null).length;
+    const sel = norm(d) === norm(estado.dia);
+    const hoy = norm(d) === norm(r.hoy);
+    return `<button type="button" class="dia" role="tab" data-dia="${esc(d)}" aria-selected="${sel}" ${acts.length ? '' : 'disabled'}
+      title="${esc(d)}: ${reg} de ${acts.length} charlas registradas">
+      <b>${esc(d)}</b><small>${hoy ? '<span class="hoy">Hoy · </span>' : ''}${reg}/${acts.length}</small></button>`;
+  }).join('');
+}
+
+/** Lista de salones (columna izquierda) con su avance del día elegido. */
+function renderLateral() {
+  const r = estado.datos;
+  const q = norm(estado.buscar);
+  let tot = 0; let reg = 0; let asis = 0; let pend = 0;
+  const html = r.salones.map((s) => {
+    const acts = actsDe(s.salon, estado.dia);
+    const n = acts.filter((a) => a.asistentes != null);
+    const atr = acts.filter(yaTermino).length;
+    const borr = acts.filter((a) => estado.borradores.has(a.id)).length;
+    tot += acts.length; reg += n.length; pend += atr; asis += n.reduce((x, a) => x + a.asistentes, 0);
+    const coincide = !q || norm(s.salon).includes(q) || acts.some((a) =>
+      norm([a.charla, a.expositor, a.simposio, a.entidad, a.id].join(' ')).includes(q));
+    if (!coincide) return '';
+    const pct = acts.length ? Math.round((n.length / acts.length) * 100) : 0;
+    const sel = norm(s.salon) === norm(estado.salon);
+    return `<button type="button" class="salon${sel ? ' sel' : ''}${acts.length ? '' : ' sin-charlas'}${acts.length && pct === 100 ? ' completo' : ''}"
+        data-salon="${esc(s.salon)}" aria-current="${sel}">
+      <span class="s-nombre">${esc(s.salon)}</span>
+      <span class="s-cuenta">${acts.length ? `${n.length}/${acts.length}` : 'Sin charlas'}</span>
+      ${acts.length ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ''}
+      <span class="s-marcas">${atr ? `<span class="m-atr" title="Ya terminaron y no tienen asistencia registrada">${atr} atrasada${atr === 1 ? '' : 's'}</span>` : ''}${borr ? `<span class="m-borr" title="Cambios sin guardar">${borr} sin guardar</span>` : ''}</span>
+    </button>`;
+  }).join('');
+  $('listaSalones').innerHTML = html || '<p class="vacio">Ningún salón coincide con la búsqueda.</p>';
+  $('totalDia').innerHTML = `<b>${esc(estado.dia || '')} · todos los salones</b>
+    <span><b>${asis.toLocaleString('es-CR')}</b> asistentes</span>
+    <span><b>${reg}/${tot}</b> charlas registradas</span>
+    ${pend ? `<span class="t-atr"><b>${pend}</b> ya terminaron sin registrar</span>` : ''}`;
 }
 
 /** Agrupa charlas consecutivas del mismo Simposio + Entidad. */
@@ -435,227 +355,232 @@ function agruparBloques(acts) {
   return bloques;
 }
 
-function renderSalon() {
+function firmaTabla(acts) {
+  return JSON.stringify(acts.map((a) => [a.id, a.hora, a.charla, a.expositor, a.codigo, a.correo, a.estado, a.simposio, a.entidad]));
+}
+
+/** Tabla de charlas del salón y día elegidos. */
+function renderTabla() {
   estado.renderPendiente = false;
-  const r = estado.salon;
+  const r = estado.datos;
   if (!r) return;
-  const puede = r.puedeGuardar;
-
-  renderDias();
-
-  $('bloqueoSalon').hidden = puede;
-  $('bloqueoSalon').textContent = r.bloqueo && !puede
-    ? 'La edición está bloqueada por el administrador. Solo puede consultar.'
-    : '';
-
-  const acts = actividadesDelDia();
+  const acts = actsDe(estado.salon, estado.dia);
+  estado.firmaTabla = firmaTabla(acts);
+  $('cabSalon').textContent = estado.salon || '—';
+  $('cabDia').innerHTML = esc(estado.dia || '') + (norm(estado.dia) === norm(r.hoy) ? ' <span class="hoy">· hoy</span>' : '');
+  const foco = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.id : null;
   if (!acts.length) {
-    $('listaActividades').innerHTML = '<p class="vacio">Este salón no tiene actividades registradas en la hoja.</p>';
+    $('tabla').innerHTML = `<p class="vacio">${esc(estado.salon || '')} no tiene charlas el ${esc((estado.dia || '').toLowerCase())}.</p>`;
   } else {
-    $('listaActividades').innerHTML = agruparBloques(acts).map((b) => `
-      <section class="bloque">
+    $('tabla').innerHTML = agruparBloques(acts).map((b) => {
+      const regB = b.acts.filter((a) => a.asistentes != null).length;
+      return `<section class="bloque">
         <header class="bloque-cab">
-          <h3>${esc(b.simposio || 'Sin simposio')}</h3>
-          ${b.entidad ? `<div class="entidad">${esc(b.entidad)}</div>` : ''}
-          ${b.rango ? `<div class="rango">${esc(b.rango)}</div>` : ''}
+          <div class="b-txt"><h3>${esc(b.simposio || 'Sin simposio')}</h3>${b.entidad ? `<span class="entidad">${esc(b.entidad)}</span>` : ''}</div>
+          <div class="b-meta">${b.rango ? `<span class="rango">${esc(b.rango)}</span>` : ''}<span class="b-cuenta">${regB}/${b.acts.length}</span></div>
         </header>
-        <div class="bloque-lista">${b.acts.map((a) => htmlCharla(a, puede)).join('')}</div>
-      </section>`).join('');
+        <div class="filas">${b.acts.map(htmlFila).join('')}</div>
+      </section>`;
+    }).join('');
+  }
+  if (foco) {
+    const inp = document.querySelector(`#tabla input[data-id="${CSS.escape(foco)}"]`);
+    if (inp) inp.focus({ preventScroll: true });
   }
   actualizarResumen();
 }
 
-/** Pestañas de días: solo se activan los días con charlas; la burbuja naranja cuenta cambios sin guardar. */
-function renderDias() {
-  const r = estado.salon;
-  if (!r) return;
-  $('tabsDias').innerHTML = r.dias.map((d) => {
-    const sel = norm(d.dia) === norm(estado.dia);
-    const esHoy = norm(d.dia) === norm(r.hoy);
-    const acts = r.actividades.filter((a) => norm(a.dia) === norm(d.dia));
-    const reg = acts.filter((a) => a.asistentes != null).length;
-    const pend = acts.filter((a) => estado.borradores.has(a.id)).length;
-    const detalle = d.activo ? `${reg} de ${acts.length}` : 'sin charlas';
-    return `<button type="button" class="tab-dia" role="tab" data-dia="${esc(d.dia)}" aria-selected="${sel}"
-      ${d.activo ? '' : 'disabled'} title="${esc(d.dia)}${d.activo ? `: ${reg} de ${acts.length} charlas registradas` : ' (sin actividades)'}">
-      ${pend ? `<span class="bdg" title="Cambios sin guardar">${pend}</span>` : ''}
-      <b>${esc(d.dia)}</b><small>${esHoy ? '<span class="hoy">Hoy · </span>' : ''}${detalle}</small></button>`;
-  }).join('');
-  // Centra el día elegido dentro de la tira de pestañas (sin mover la página).
-  const tira = $('tabsDias');
-  const act = tira.querySelector('[aria-selected="true"]');
-  if (act) tira.scrollLeft = act.offsetLeft - (tira.clientWidth - act.offsetWidth) / 2;
+/** Si solo cambiaron números/estados (no la estructura), actualiza fila por fila. */
+function parchearTabla() {
+  const acts = actsDe(estado.salon, estado.dia);
+  if (firmaTabla(acts) !== estado.firmaTabla) return false;
+  acts.forEach((a) => actualizarFila(a.id));
+  return true;
 }
 
 function htmlExpositores(a) {
   const e = a.expositores || { personas: [], codigosSueltos: [], correosSueltos: [] };
   const sinNombre = !e.personas.length || (e.personas.length === 1 && norm(e.personas[0].nombre) === 'pendiente');
-  const items = sinNombre
-    ? ['<li><span class="exp-nombre">Expositor por confirmar</span></li>']
-    : e.personas.map((p) => {
-      const cod = p.codigo ? (/^\d+$/.test(p.codigo) ? 'Cód. ' + p.codigo : p.codigo) : 'Cód. —';
-      return `<li><span class="exp-nombre">${esc(p.nombre)}</span><br>
-        <span class="exp-datos">${esc(cod)} · ${p.correo ? esc(p.correo) : '—'}</span></li>`;
-    });
-  if (e.codigosSueltos.length) items.push(`<li class="exp-datos">Códigos: ${esc(e.codigosSueltos.join(' / '))}</li>`);
-  if (e.correosSueltos.length) items.push(`<li class="exp-datos">Correos: ${esc(e.correosSueltos.join(' / '))}</li>`);
-  return `<ul class="expositores">${items.join('')}</ul>`;
+  if (sinNombre) return '<div class="exp"><span class="exp-nombre">Expositor por confirmar</span></div>';
+  const lineas = e.personas.map((p) => {
+    const cod = p.codigo ? (/^\d+$/.test(p.codigo) ? 'Cód. ' + p.codigo : p.codigo) : 'Cód. —';
+    return `<div class="exp"><span class="exp-nombre">${esc(p.nombre)}</span>
+      <span class="exp-datos">${esc(cod)} · ${p.correo ? `<a href="mailto:${esc(p.correo)}">${esc(p.correo)}</a>` : '—'}</span></div>`;
+  });
+  if (e.codigosSueltos.length) lineas.push(`<div class="exp exp-datos">Códigos: ${esc(e.codigosSueltos.join(' / '))}</div>`);
+  if (e.correosSueltos.length) lineas.push(`<div class="exp exp-datos">Correos: ${esc(e.correosSueltos.join(' / '))}</div>`);
+  return lineas.join('');
 }
 
-function htmlCharla(a, puede) {
+function htmlFila(a) {
   const valor = estado.borradores.has(a.id) ? estado.borradores.get(a.id) : (a.asistentes == null ? '' : String(a.asistentes));
-  const st = estadoCharla(a);
-  return `<article class="charla ${st.clase}" id="c-${esc(a.id)}" data-id="${esc(a.id)}">
-    <div class="charla-hora">${esc(a.hora)}</div>
-    ${a.estado === 'PENDIENTE' ? '<span class="etq-pendiente">PENDIENTE — expositor por confirmar</span>' : ''}
-    <h4 class="charla-titulo">${esc(a.charla)}</h4>
-    ${htmlExpositores(a)}
-    <div class="registro">
-      <input type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off"
-        maxlength="6" placeholder="—" value="${esc(valor)}" data-id="${esc(a.id)}"
-        aria-label="Cantidad de asistentes: ${esc(a.charla)}" ${puede ? '' : 'disabled'}>
-      <button type="button" class="btn btn-primario" data-guardar="${esc(a.id)}"
-        ${puede && !estado.guardando.has(a.id) ? '' : 'disabled'}>${estado.guardando.has(a.id) ? '…' : 'Guardar'}</button>
+  const st = estadoFila(a);
+  const puede = puedeGuardar();
+  return `<div class="fila ${st.clase}" id="c-${esc(a.id)}" data-id="${esc(a.id)}">
+    <div class="c-hora"><b>${esc(a.hora)}</b>${marcaTiempo(a)}</div>
+    <div class="c-charla">
+      <div class="c-titulo">${esc(a.charla)}${a.estado === 'PENDIENTE' ? ' <span class="etq-pendiente">PENDIENTE — expositor por confirmar</span>' : ''}</div>
+      ${htmlExpositores(a)}
     </div>
-    <div class="estado ${st.estado}" aria-live="polite">${esc(st.texto)}</div>
-  </article>`;
+    <div class="c-num">
+      <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="6" placeholder="—"
+        value="${esc(valor)}" data-id="${esc(a.id)}" aria-label="Asistentes: ${esc(a.charla)}" ${puede ? '' : 'disabled'}>
+    </div>
+    <div class="c-estado">
+      <span class="estado ${st.estado}">${esc(st.texto)}</span>
+      <button type="button" class="btn-mini" data-guardar="${esc(a.id)}" ${puede && !estado.guardando.has(a.id) ? '' : 'disabled'}>${estado.guardando.has(a.id) ? '…' : 'Guardar'}</button>
+    </div>
+  </div>`;
+}
+
+function marcaTiempo(a) {
+  if (enCurso(a)) return '<span class="t-curso">En curso</span>';
+  if (yaTermino(a)) return '<span class="t-atr">Ya terminó</span>';
+  return '';
 }
 
 /** Texto y colores del estado de una charla. */
-function estadoCharla(a) {
+function estadoFila(a) {
+  const extra = yaTermino(a) && !estado.borradores.has(a.id) ? ' atrasada' : '';
   if (estado.guardando.has(a.id)) return { clase: 'modificada', estado: 'guardando', texto: 'Guardando…' };
-  if (estado.errores.has(a.id)) {
-    return { clase: 'con-error', estado: 'err', texto: 'Error: ' + estado.errores.get(a.id) + ' Toque Guardar para reintentar.' };
-  }
-  if (estado.borradores.has(a.id)) return { clase: 'modificada', estado: 'mod', texto: 'Cambio sin guardar' };
+  if (estado.errores.has(a.id)) return { clase: 'con-error', estado: 'err', texto: estado.errores.get(a.id) };
+  if (estado.borradores.has(a.id)) return { clase: 'modificada', estado: 'mod', texto: 'Sin guardar · Enter' };
   if (a.asistentes != null) {
-    const quien = a.registradoPor ? ' por ' + a.registradoPor : '';
-    return {
-      clase: 'guardada', estado: 'ok',
-      texto: a.horaRegistro ? `Guardado ${a.horaRegistro}${quien}` : `Registrado: ${a.asistentes} (editado en la hoja)`
-    };
+    const quien = a.registradoPor ? ' · ' + a.registradoPor : '';
+    return { clase: 'guardada', estado: 'ok', texto: a.horaRegistro ? `✓ ${a.horaRegistro}${quien}` : '✓ Editado en la hoja' };
   }
-  return { clase: '', estado: 'sin', texto: 'Sin registrar' };
+  return { clase: extra.trim(), estado: 'sin', texto: 'Sin registrar' };
 }
 
-/** Actualiza una tarjeta sin redibujar la lista (no quita el foco del campo). */
-function actualizarTarjeta(id) {
-  const card = document.getElementById('c-' + id);
-  const a = estado.salon && estado.salon.actividades.find((x) => x.id === id);
-  if (!card || !a) return;
-  const st = estadoCharla(a);
-  card.className = 'charla ' + st.clase;
-  const est = card.querySelector('.estado');
+/** Actualiza una fila sin redibujar la tabla (no quita el foco del campo). */
+function actualizarFila(id) {
+  const fila = document.getElementById('c-' + id);
+  const a = actividad(id);
+  if (!fila || !a) return;
+  const st = estadoFila(a);
+  fila.className = 'fila ' + st.clase;
+  const est = fila.querySelector('.estado');
   est.className = 'estado ' + st.estado;
   est.textContent = st.texto;
-  const inp = card.querySelector('input');
+  fila.querySelector('.c-hora').innerHTML = `<b>${esc(a.hora)}</b>${marcaTiempo(a)}`;
+  const inp = fila.querySelector('input');
+  inp.disabled = !puedeGuardar();
   if (!estado.borradores.has(id) && document.activeElement !== inp) inp.value = a.asistentes == null ? '' : String(a.asistentes);
-  const btn = card.querySelector('[data-guardar]');
-  btn.disabled = !estado.salon.puedeGuardar || estado.guardando.has(id);
+  const btn = fila.querySelector('[data-guardar]');
+  btn.disabled = !puedeGuardar() || estado.guardando.has(id);
   btn.textContent = estado.guardando.has(id) ? '…' : 'Guardar';
 }
 
 function actualizarResumen() {
-  const acts = actividadesDelDia();
+  const acts = actsDe(estado.salon, estado.dia);
   const reg = acts.filter((a) => a.asistentes != null);
   $('resTotal').textContent = reg.reduce((s, a) => s + a.asistentes, 0).toLocaleString('es-CR');
   $('resCharlas').textContent = `${reg.length} / ${acts.length}`;
   $('resBarra').style.width = (acts.length ? Math.round((reg.length / acts.length) * 100) : 0) + '%';
-  const ids = new Set(estado.salon ? estado.salon.actividades.map((a) => a.id) : []);
-  const n = [...estado.borradores.keys()].filter((id) => ids.has(id)).length;
-  const errores = [...estado.errores.keys()].filter((id) => ids.has(id)).length;
+  $('resPend').textContent = acts.filter(yaTermino).length;
+  const n = estado.borradores.size;
+  const salones = new Set([...estado.borradores.keys()].map((id) => (actividad(id) || {}).salon));
   $('dockSum').innerHTML = n
-    ? `<b>${n} cambio${n === 1 ? '' : 's'} sin guardar</b>${errores ? errores + ' con error · toque para reintentar' : 'Toque Guardar todo'}`
-    : `<b>Todo guardado</b>${esc(estado.dia || '')}: ${reg.length} de ${acts.length} charlas registradas`;
+    ? `<b>${n} cambio${n === 1 ? '' : 's'} sin guardar</b>${salones.size > 1 ? ` en ${salones.size} salones` : ''}`
+    : '<b>Todo guardado</b>';
   const btn = $('btnGuardarTodo');
   btn.textContent = n ? `Guardar todo (${n})` : 'Guardar todo';
-  renderBurbujas();
-  btn.disabled = !n || !(estado.salon && estado.salon.puedeGuardar);
-  $('barraGuardarTodo').hidden = !acts.length || !(estado.salon && estado.salon.puedeGuardar);
-}
-
-/** Actualiza solo las burbujas de cambios sin guardar de las pestañas (sin redibujarlas). */
-function renderBurbujas() {
-  const r = estado.salon;
-  if (!r) return;
-  document.querySelectorAll('#tabsDias .tab-dia').forEach((b) => {
-    const pend = r.actividades.filter((a) => norm(a.dia) === norm(b.dataset.dia) && estado.borradores.has(a.id)).length;
-    let bdg = b.querySelector('.bdg');
-    if (!pend) { if (bdg) bdg.remove(); return; }
-    if (!bdg) { bdg = document.createElement('span'); bdg.className = 'bdg'; bdg.title = 'Cambios sin guardar'; b.prepend(bdg); }
-    bdg.textContent = pend;
-  });
-  const sel = r.actividades.filter((a) => a.asistentes != null);
-  document.querySelectorAll('#tabsDias .tab-dia:not(:disabled) small').forEach((sm) => {
-    const dia = sm.closest('.tab-dia').dataset.dia;
-    const acts = r.actividades.filter((a) => norm(a.dia) === norm(dia));
-    const reg = sel.filter((a) => norm(a.dia) === norm(dia)).length;
-    const hoy = sm.querySelector('.hoy');
-    sm.innerHTML = (hoy ? hoy.outerHTML : '') + `${reg} de ${acts.length}`;
-  });
+  btn.disabled = !n || !puedeGuardar();
 }
 
 function reemplazarActividad(nueva) {
-  const lista = estado.salon && estado.salon.actividades;
+  const lista = estado.datos && estado.datos.actividades;
   if (!lista) return;
   const i = lista.findIndex((a) => a.id === nueva.id);
   if (i >= 0) lista[i] = nueva;
 }
 
-/** Registra lo escrito en un campo (solo dígitos). */
+/** Después de guardar: refresca fila, totales, lista de salones y días. */
+function trasGuardar(ids) {
+  ids.forEach(actualizarFila);
+  actualizarResumen();
+  renderLateral();
+  renderDias();
+  document.querySelectorAll('#tabla .bloque').forEach((b) => {
+    const filas = [...b.querySelectorAll('.fila')].map((f) => actividad(f.dataset.id)).filter(Boolean);
+    b.querySelector('.b-cuenta').textContent = `${filas.filter((a) => a.asistentes != null).length}/${filas.length}`;
+  });
+}
+
+// ---------------------------------------------------------------------------
+//  Registro: escribir y guardar
+// ---------------------------------------------------------------------------
 function alEscribir(inp) {
   const limpio = inp.value.replace(/\D+/g, '').slice(0, 6);
   if (limpio !== inp.value) inp.value = limpio;
   const id = inp.dataset.id;
-  const a = estado.salon.actividades.find((x) => x.id === id);
+  const a = actividad(id);
   const guardado = a && a.asistentes != null ? String(a.asistentes) : '';
+  const antes = estado.borradores.size;
   if (limpio === guardado) estado.borradores.delete(id); else estado.borradores.set(id, limpio);
   estado.errores.delete(id);
-  actualizarTarjeta(id);
+  actualizarFila(id);
   actualizarResumen();
+  if (antes !== estado.borradores.size) renderLateral();
+}
+
+/** Deshace lo escrito en una fila (Esc). */
+function deshacer(id) {
+  estado.borradores.delete(id);
+  estado.errores.delete(id);
+  const inp = document.querySelector(`#tabla input[data-id="${CSS.escape(id)}"]`);
+  const a = actividad(id);
+  if (inp && a) inp.value = a.asistentes == null ? '' : String(a.asistentes);
+  trasGuardar([id]);
+}
+
+function avisarNombre() {
+  if (nombreUsuario() || estado.avisoNombre) return;
+  estado.avisoNombre = true;
+  toast('Consejo: escriba su nombre arriba ("Registra") para que quede quién anotó cada número.');
 }
 
 async function guardarUno(id) {
-  if (!estado.salon || !estado.salon.puedeGuardar || estado.guardando.has(id)) return;
-  const inp = document.querySelector(`#c-${CSS.escape(id)} input`);
-  const valor = estado.borradores.has(id) ? estado.borradores.get(id) : (inp ? inp.value.trim() : '');
+  if (!puedeGuardar() || estado.guardando.has(id)) return;
+  const a = actividad(id);
+  const valor = estado.borradores.has(id) ? estado.borradores.get(id) : (a && a.asistentes != null ? String(a.asistentes) : '');
   if (valor === '') {
     estado.errores.set(id, 'Escriba la cantidad de asistentes.');
-    return actualizarTarjeta(id);
+    return actualizarFila(id);
   }
+  if (!estado.borradores.has(id)) return; // nada nuevo que guardar
+  avisarNombre();
   estado.guardando.add(id);
   estado.errores.delete(id);
-  actualizarTarjeta(id);
+  actualizarFila(id);
   try {
-    const r = await apiOk('guardarAsistencia', { id, valor, token: tokenSalon() });
+    const r = await apiOk('guardarAsistencia', { id, valor, usuario: nombreUsuario() });
     reemplazarActividad(r.actividad);
-    if (estado.borradores.get(id) === valor || !estado.borradores.has(id)) estado.borradores.delete(id);
+    if (estado.borradores.get(id) === valor) estado.borradores.delete(id);
   } catch (e) {
-    estado.errores.set(id, e.message);
-    if (!estado.borradores.has(id)) estado.borradores.set(id, valor); // conservar el número
+    estado.errores.set(id, e.message + ' Enter para reintentar.');
   } finally {
     estado.guardando.delete(id);
-    actualizarTarjeta(id);
-    actualizarResumen();
+    trasGuardar([id]);
   }
 }
 
 async function guardarTodo() {
-  if (!estado.salon || !estado.salon.puedeGuardar) return;
-  const ids = new Set(estado.salon.actividades.map((a) => a.id));
+  if (!puedeGuardar()) return;
   const items = [];
   [...estado.borradores.entries()].forEach(([id, valor]) => {
-    if (!ids.has(id) || estado.guardando.has(id)) return;
-    if (valor === '') { estado.errores.set(id, 'Escriba la cantidad de asistentes.'); actualizarTarjeta(id); return; }
+    if (estado.guardando.has(id)) return;
+    if (valor === '') { estado.errores.set(id, 'Escriba la cantidad de asistentes.'); actualizarFila(id); return; }
     items.push({ id, valor });
   });
   if (!items.length) return;
+  avisarNombre();
   const btn = $('btnGuardarTodo');
   btn.disabled = true; btn.textContent = 'Guardando…';
-  items.forEach((it) => { estado.guardando.add(it.id); estado.errores.delete(it.id); actualizarTarjeta(it.id); });
+  items.forEach((it) => { estado.guardando.add(it.id); estado.errores.delete(it.id); actualizarFila(it.id); });
   let ok = 0; let mal = 0;
   try {
-    const r = await api('guardarLote', { items, token: tokenSalon() });
+    const r = await api('guardarLote', { items, usuario: nombreUsuario() });
     if (!r.resultados) throw errorApp(r.error || 'No se pudo guardar.', r.codigo);
     r.resultados.forEach((res) => {
       const enviado = items.find((it) => it.id === res.id);
@@ -672,11 +597,79 @@ async function guardarTodo() {
     mal = items.length;
     items.forEach((it) => estado.errores.set(it.id, e.message));
   } finally {
-    items.forEach((it) => { estado.guardando.delete(it.id); actualizarTarjeta(it.id); });
-    actualizarResumen();
+    items.forEach((it) => estado.guardando.delete(it.id));
+    trasGuardar(items.map((it) => it.id));
   }
-  if (mal) toast(`${ok} guardado(s), ${mal} con error. Revise las tarjetas en rojo.`, 'err');
+  if (mal) toast(`${ok} guardado(s), ${mal} con error. Revise las filas en rojo.`, 'err');
   else toast(`${ok} registro(s) guardado(s).`, 'ok');
+}
+
+/** Mueve el cursor al campo anterior/siguiente de la tabla. */
+function moverFoco(desde, paso) {
+  const campos = [...document.querySelectorAll('#tabla input[data-id]:not(:disabled)')];
+  const i = campos.indexOf(desde);
+  const sig = campos[i + paso];
+  if (sig) { sig.focus(); sig.select(); sig.scrollIntoView({ block: 'nearest' }); }
+  return !!sig;
+}
+
+/** Al abrir un salón con mouse, deja el cursor en la primera charla sin registrar. */
+function enfocarPrimeraVacia() {
+  if (!punteroFino()) return;
+  const campos = [...document.querySelectorAll('#tabla input[data-id]:not(:disabled)')];
+  const vacio = campos.find((c) => c.value === '') || campos[0];
+  if (vacio) vacio.focus({ preventScroll: true });
+}
+
+function elegirSalon(nombre) {
+  estado.salon = nombre;
+  guardarLocal(CLAVE_ULTIMO, nombre);
+  fijarHash();
+  renderLateral();
+  renderTabla();
+  $('contenido').scrollTop = 0;
+  window.scrollTo(0, 0);
+  enfocarPrimeraVacia();
+}
+
+function elegirDia(dia) {
+  estado.dia = dia;
+  fijarHash();
+  renderDias();
+  renderLateral();
+  renderTabla();
+  $('contenido').scrollTop = 0;
+  enfocarPrimeraVacia();
+}
+
+// ---------------------------------------------------------------------------
+//  PIN de administrador
+// ---------------------------------------------------------------------------
+function mostrarPin() {
+  mostrarVista('vPin');
+  $('inpPin').value = '';
+  mostrarError('errorPin', '');
+  setTimeout(() => $('inpPin').focus(), 50);
+}
+
+async function enviarPin(ev) {
+  ev.preventDefault();
+  const pin = $('inpPin').value.trim();
+  if (!pin) return mostrarError('errorPin', 'Escriba el PIN.');
+  const btn = $('btnEntrar');
+  btn.disabled = true; btn.textContent = 'Verificando…';
+  mostrarError('errorPin', '');
+  try {
+    const r = await apiOk('login', { salon: '', pin });
+    Sesion.guardarLogin(r);
+    $('inpPin').value = '';
+    ruta();
+  } catch (e) {
+    mostrarError('errorPin', e.message);
+    $('inpPin').select();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Entrar';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -686,10 +679,11 @@ const adm = { borradores: new Map(), errores: new Map(), guardando: new Set() };
 
 async function mostrarAdmin() {
   const ses = Sesion.admin();
-  if (!ses) return mostrarPin(null);
-  mostrarVista('vAdmin', 'Administración', 'Totales, charlas sin registrar, correcciones y bitácora.', true);
+  if (!ses) return mostrarPin();
+  mostrarVista('vAdmin');
   mostrarError('errorAdmin', '');
-  if (estado.admin) renderAdmin(); else cargando(true);
+  if (estado.admin) renderAdmin();
+  else $('admTotales').innerHTML = '<div class="cargando"><span class="spinner"></span> Cargando…</div>';
   await cargarAdmin(false);
 }
 
@@ -707,8 +701,6 @@ async function cargarAdmin(silencioso) {
     if (estado.admTab === 'bitacora') cargarBitacora();
   } catch (e) {
     if (!silencioso) mostrarError('errorAdmin', e.message);
-  } finally {
-    cargando(false);
   }
 }
 
@@ -920,7 +912,7 @@ async function alternarBloqueo() {
   try {
     const r = await apiOk('setBloqueo', { valor: nuevo ? 'SI' : 'NO', token: ses.token });
     estado.admin.bloqueo = r.bloqueo;
-    if (estado.inicio) estado.inicio.bloqueo = r.bloqueo;
+    if (estado.datos) estado.datos.bloqueo = r.bloqueo;
     renderAdmin();
     toast(r.bloqueo ? 'Edición bloqueada.' : 'Edición desbloqueada.', 'ok');
   } catch (e) {
@@ -973,6 +965,7 @@ function exportarCsv() {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+
 // ---------------------------------------------------------------------------
 //  Eventos
 // ---------------------------------------------------------------------------
@@ -985,79 +978,88 @@ function iniciar() {
   window.addEventListener('offline', red);
   red();
 
-  $('btnVolver').addEventListener('click', () => {
-    if (estado.vista === 'vSalon' && estado.borradores.size &&
-      !confirm('Hay números sin guardar. ¿Salir de todos modos? (Se conservan si vuelve a este salón.)')) return;
-    ir('#/');
-  });
-  $('btnSalir').addEventListener('click', () => {
-    if (hayBorradores() && !confirm('Hay números sin guardar. ¿Cerrar la sesión de todos modos?')) return;
-    Sesion.borrarTodo();
-    estado.salon = null; estado.salonClave = null; estado.admin = null; estado.bitacora = null;
-    estado.borradores.clear(); estado.errores.clear(); adm.borradores.clear(); adm.errores.clear();
-    ir('#/');
-  });
+  // Nombre de quien registra (se recuerda en esta computadora)
+  $('inpNombre').value = leerLocal(CLAVE_NOMBRE);
+  $('inpNombre').addEventListener('input', () => guardarLocal(CLAVE_NOMBRE, nombreUsuario()));
 
-  // Carrusel: flechas, puntos, teclado y posición al deslizar
-  let rafCarrusel = 0;
-  $('gridSalones').addEventListener('scroll', () => {
-    cancelAnimationFrame(rafCarrusel);
-    rafCarrusel = requestAnimationFrame(() => carrusel.actualizar());
-  }, { passive: true });
-  window.addEventListener('resize', () => carrusel.actualizar());
-  $('carPrev').addEventListener('click', () => carrusel.mover(-1));
-  $('carNext').addEventListener('click', () => carrusel.mover(1));
-  $('carPuntos').addEventListener('click', (e) => {
-    const p = e.target.closest('[data-i]');
-    if (p) carrusel.ir(Number(p.dataset.i));
-  });
-  $('gridSalones').addEventListener('keydown', (e) => {
-    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-    e.preventDefault();
-    const ts = carrusel.tarjetas();
-    const i = Math.max(0, ts.indexOf(document.activeElement));
-    const j = Math.max(0, Math.min(ts.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)));
-    ts[j].focus({ preventScroll: true });
-    carrusel.ir(j);
-  });
-  $('gridSalones').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-salon]');
-    if (b) ir(hashSalon(b.dataset.salon));
-  });
   $('btnAdmin').addEventListener('click', () => ir('#/admin'));
+  $('btnVolver').addEventListener('click', () => {
+    if (adm.borradores.size && !confirm('Hay correcciones sin guardar en Administración. ¿Salir de todos modos?')) return;
+    ir(hashRegistro());
+  });
+  $('btnRecargar').addEventListener('click', () => {
+    if (estado.vista === 'vAdmin') { estado.bitacora = null; cargarAdmin(false); return; }
+    cargando(!estado.datos);
+    cargarDatos(false);
+  });
   $('formPin').addEventListener('submit', enviarPin);
 
-  // Pestañas de días
-  $('tabsDias').addEventListener('click', (e) => {
+  // Días
+  $('dias').addEventListener('click', (e) => {
     const b = e.target.closest('[data-dia]');
-    if (!b || b.disabled) return;
-    estado.dia = b.dataset.dia;
-    history.replaceState(null, '', hashSalon(estado.salon.salon, estado.dia));
-    renderSalon();
-    window.scrollTo(0, 0);
+    if (b && !b.disabled) elegirDia(b.dataset.dia);
   });
 
-  // Tarjetas de charlas
-  const lista = $('listaActividades');
-  lista.addEventListener('input', (e) => { if (e.target.matches('input[data-id]')) alEscribir(e.target); });
-  lista.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.matches('input[data-id]')) { e.preventDefault(); guardarUno(e.target.dataset.id); }
+  // Salones
+  $('listaSalones').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-salon]');
+    if (b) elegirSalon(b.dataset.salon);
   });
-  lista.addEventListener('click', (e) => {
+  let tBuscar = null;
+  $('buscar').addEventListener('input', () => {
+    clearTimeout(tBuscar);
+    tBuscar = setTimeout(() => { estado.buscar = $('buscar').value; renderLateral(); }, 150);
+  });
+  $('buscar').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const primero = $('listaSalones').querySelector('[data-salon]');
+    if (primero) elegirSalon(primero.dataset.salon);
+  });
+
+  // Tabla de charlas: teclado pensado para registrar rápido
+  const tabla = $('tabla');
+  tabla.addEventListener('input', (e) => { if (e.target.matches('input[data-id]')) alEscribir(e.target); });
+  tabla.addEventListener('keydown', (e) => {
+    const inp = e.target;
+    if (!inp.matches('input[data-id]')) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (estado.borradores.has(inp.dataset.id) || estado.errores.has(inp.dataset.id)) guardarUno(inp.dataset.id);
+      moverFoco(inp, e.shiftKey ? -1 : 1);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      moverFoco(inp, e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'Escape') {
+      deshacer(inp.dataset.id);
+    }
+  });
+  tabla.addEventListener('focusin', (e) => { if (e.target.matches('input[data-id]')) e.target.select(); });
+  tabla.addEventListener('click', (e) => {
     const b = e.target.closest('[data-guardar]');
     if (b) guardarUno(b.dataset.guardar);
   });
   // Si llegaron datos nuevos mientras escribía, se redibuja al salir del campo.
-  lista.addEventListener('focusout', () => {
-    setTimeout(() => { if (estado.renderPendiente && !escribiendo() && estado.vista === 'vSalon') renderSalon(); }, 400);
+  tabla.addEventListener('focusout', () => {
+    setTimeout(() => { if (estado.renderPendiente && !escribiendo() && estado.vista === 'vRegistro') renderTabla(); }, 400);
   });
-  $('btnRecargar').addEventListener('click', () => { mostrarError('errorSalon', ''); cargando(true); cargarSalon(false); });
   $('btnGuardarTodo').addEventListener('click', guardarTodo);
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && estado.vista === 'vRegistro') {
+      e.preventDefault();
+      guardarTodo();
+    }
+  });
 
   // Administrador
-  $('admRecargar').addEventListener('click', () => { estado.bitacora = null; cargando(true); cargarAdmin(false); });
+  $('admRecargar').addEventListener('click', () => { estado.bitacora = null; cargarAdmin(false); });
   $('admBloqueo').addEventListener('click', alternarBloqueo);
   $('admCsv').addEventListener('click', exportarCsv);
+  $('admSalir').addEventListener('click', () => {
+    if (adm.borradores.size && !confirm('Hay correcciones sin guardar. ¿Cerrar la sesión de todos modos?')) return;
+    Sesion.olvidarToken();
+    estado.admin = null; estado.bitacora = null; adm.borradores.clear(); adm.errores.clear();
+    ir(hashRegistro());
+  });
   document.querySelector('.tabs-admin').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]');
     if (!b) return;
@@ -1066,8 +1068,8 @@ function iniciar() {
     if (estado.admTab === 'bitacora') cargarBitacora();
   });
   ['fDia', 'fSalon', 'fEstado', 'fSinRegistrar'].forEach((id) => $(id).addEventListener('change', renderAdmin));
-  let tBuscar = null;
-  $('fTexto').addEventListener('input', () => { clearTimeout(tBuscar); tBuscar = setTimeout(renderAdmin, 250); });
+  let tFiltro = null;
+  $('fTexto').addEventListener('input', () => { clearTimeout(tFiltro); tFiltro = setTimeout(renderAdmin, 250); });
   const vAdmin = $('vAdmin');
   vAdmin.addEventListener('input', (e) => {
     const inp = e.target.closest('input[data-aid]');
@@ -1102,7 +1104,7 @@ function iniciar() {
 function refrescarSiToca(forzar) {
   if (document.visibilityState === 'hidden' || navigator.onLine === false) return;
   if (!forzar && Date.now() - estado.ultimaCarga < REFRESCO_MS - 2000) return;
-  if (estado.vista === 'vSalon' && estado.salon) cargarSalon(true);
+  if (estado.vista === 'vRegistro' && estado.datos) cargarDatos(true);
   else if (estado.vista === 'vAdmin' && estado.admin) cargarAdmin(true);
 }
 

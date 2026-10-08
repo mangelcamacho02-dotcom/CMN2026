@@ -24,10 +24,11 @@
  *     (hoja Actividades), en la hoja Bitacora y en Config → Bloquear_edicion.
  *   - Toda escritura se hace dentro de un LockService para que varios
  *     encargados puedan guardar al mismo tiempo sin pisarse.
- *   - Los PINes nunca se envían al navegador. Al entrar con un PIN correcto
- *     el servidor entrega una "sesión" firmada (token) que el navegador usa
- *     en las siguientes peticiones; si el PIN cambia en la hoja, la sesión
- *     deja de servir y hay que volver a entrar.
+ *   - Registrar asistencia NO requiere PIN (solo lo usa el personal de apoyo).
+ *     El PIN de administrador (Config → PIN_admin) protege el panel de
+ *     administración: correcciones, borrar registros, bloqueo y bitácora.
+ *     Los PINes nunca se envían al navegador; al entrar con el PIN correcto
+ *     el servidor entrega una "sesión" firmada (token).
  *
  *  Si modifica este archivo, recuerde volver a publicar:
  *    Implementar → Gestionar implementaciones → (lápiz) → Versión: "Nueva versión".
@@ -112,10 +113,11 @@ function ejecutarAccion_(p) {
     switch (p.accion) {
       case 'ping':              return { ok: true, mensaje: 'API CMN 2026 activa', ahora: ahora_().iso };
       case 'getSalones':        return getSalones();
+      case 'getTodo':           return getTodo();
       case 'login':             return login(p.salon, p.pin);
       case 'getActividades':    return getActividades(p.salon, p.dia, p.token);
-      case 'guardarAsistencia': return guardarAsistencia(p.id, p.valor, p.token);
-      case 'guardarLote':       return guardarLote(p.items, p.token);
+      case 'guardarAsistencia': return guardarAsistencia(p.id, p.valor, p.token, p.usuario);
+      case 'guardarLote':       return guardarLote(p.items, p.token, p.usuario);
       case 'getResumenAdmin':   return getResumenAdmin(p.token);
       case 'getBitacora':       return getBitacora(p.token, p.limite);
       case 'setBloqueo':        return setBloqueo(p.valor, p.token);
@@ -196,9 +198,9 @@ function login(salon, pin) {
  * del salón (así el celular puede cambiar de día sin volver a cargar).
  */
 function getActividades(salon, dia, token) {
-  var sesion = verificarToken_(token);
-  // El encargado solo ve su salón; el administrador puede pedir cualquiera.
-  if (sesion.rol === 'admin') {
+  var sesion = sesionDe_(token, '');
+  // Personal de apoyo y administrador pueden pedir cualquier salón.
+  if (sesion.rol !== 'encargado') {
     var ficha = leerSalones_().filter(function (s) { return mismoTexto_(s.salon, salon); })[0];
     if (!ficha) throw errorPublico_('El salón "' + texto_(salon) + '" no existe.', 'SALON');
     sesion.salon = ficha.salon;
@@ -228,9 +230,33 @@ function getActividades(salon, dia, token) {
   };
 }
 
+/**
+ * getTodo — todo lo que necesita la pantalla del personal de apoyo en UNA
+ * sola petición: evento, días, salones activos y todas sus charlas.
+ * (No incluye PINes.) Así cambiar de salón o de día es instantáneo.
+ */
+function getTodo() {
+  var config = leerConfig_();
+  var hoy = infoHoy_(config);
+  var salones = leerSalones_().filter(function (s) { return s.activo; });
+  var acts = leerActividades_().filter(function (a) {
+    return salones.some(function (s) { return mismoTexto_(s.salon, a.salon); });
+  });
+  return {
+    ok: true,
+    evento: config.evento,
+    dias: config.dias,
+    bloqueo: config.bloqueo,
+    hoy: hoy.dia,
+    ahora: hoy.iso,
+    salones: salones.map(function (s) { return { salon: s.salon, encargado: s.encargado }; }),
+    actividades: ordenarActividades_(acts, config.dias).map(function (a) { return actividadPublica_(a, hoy, config); })
+  };
+}
+
 /** guardarAsistencia — guarda un solo valor. Es un lote de un elemento. */
-function guardarAsistencia(id, valor, token) {
-  var r = guardarLote([{ id: id, valor: valor }], token);
+function guardarAsistencia(id, valor, token, usuario) {
+  var r = guardarLote([{ id: id, valor: valor }], token, usuario);
   var res = r.resultados[0];
   if (!res.ok) return { ok: false, error: res.error, codigo: res.codigo, id: id };
   return { ok: true, actividad: res.actividad, cambio: res.cambio };
@@ -243,12 +269,14 @@ function guardarAsistencia(id, valor, token) {
  *
  * Reglas:
  *  - valor: entero ≥ 0. El administrador además puede enviar "" para borrar.
- *  - Un encargado solo puede guardar charlas de SU salón.
+ *  - Sin token = personal de apoyo (puede guardar en cualquier salón).
+ *    `usuario` es el nombre que la persona escribió (opcional) y queda en
+ *    Registrado_por y en la Bitacora.
  *  - Si Config → Bloquear_edicion = SI, solo el administrador puede guardar.
  *  - Cada cambio se anota en la Bitacora con el valor anterior y el nuevo.
  */
-function guardarLote(items, token) {
-  var sesion = verificarToken_(token);
+function guardarLote(items, token, usuario) {
+  var sesion = sesionDe_(token, usuario);
   if (!Array.isArray(items) || !items.length) throw errorPublico_('No hay datos para guardar.', 'DATOS');
   if (items.length > 500) throw errorPublico_('Demasiados elementos en un solo lote.', 'DATOS');
 
@@ -284,24 +312,26 @@ function guardarLote(items, token) {
           if (!id || !(id in filaPorId)) throw errorPublico_('No existe la actividad ' + (id || '(sin ID)') + '.', 'NO_EXISTE');
           var i = filaPorId[id];
           var fila = tabla.filas[i];
-          if (sesion.rol !== 'admin' && !mismoTexto_(fila[col.Salon], sesion.salon)) {
+          if (sesion.rol === 'encargado' && !mismoTexto_(fila[col.Salon], sesion.salon)) {
             throw errorPublico_('La actividad ' + id + ' no pertenece al salón ' + sesion.salon + '.', 'OTRO_SALON');
           }
           var nuevo = validarValor_(it.valor, sesion.rol === 'admin');
           var anterior = numeroONulo_(fila[col.Asistentes]);
+          // Quién registró: el nombre escrito; si no hay, el salón.
+          var quien = sesion.usuario || texto_(fila[col.Salon]);
           var numFila = i + 2; // +1 por el encabezado, +1 porque la hoja empieza en 1
           var cambio = anterior !== nuevo;
 
           if (cambio) {
             hoja.getRange(numFila, col.Asistentes + 1).setValue(nuevo === null ? '' : nuevo);
-            hoja.getRange(numFila, col.Registrado_por + 1).setValue(nuevo === null ? '' : sesion.usuario);
+            hoja.getRange(numFila, col.Registrado_por + 1).setValue(nuevo === null ? '' : quien);
             hoja.getRange(numFila, col.Fecha_registro + 1).setValue(nuevo === null ? '' : ahora);
             fila[col.Asistentes] = nuevo === null ? '' : nuevo;
-            fila[col.Registrado_por] = nuevo === null ? '' : sesion.usuario;
+            fila[col.Registrado_por] = nuevo === null ? '' : quien;
             fila[col.Fecha_registro] = nuevo === null ? '' : ahora;
             bitacora.push({
               Fecha: ahora,
-              Usuario: sesion.usuario,
+              Usuario: sesion.usuario || 'Personal de apoyo',
               Salon: texto_(fila[col.Salon]),
               ID_actividad: id,
               Valor_anterior: anterior === null ? '' : anterior,
@@ -494,6 +524,18 @@ function verificarToken_(token) {
     throw errorPublico_('El PIN cambió. Vuelva a ingresarlo.', 'SESION');
   }
   return { rol: rol, salon: rol === 'admin' ? null : salon, usuario: rol === 'admin' ? USUARIO_ADMIN : salon };
+}
+
+/**
+ * Sesión para leer o guardar asistencia:
+ *  - con token → administrador (o encargado, si se usa un token de salón);
+ *  - sin token → personal de apoyo, identificado por el nombre que escribió.
+ */
+function sesionDe_(token, usuario) {
+  if (texto_(token)) return verificarToken_(token);
+  var nombre = texto_(usuario).replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').slice(0, 40);
+  if (/^[=+\-@]/.test(nombre)) nombre = "'" + nombre; // evita fórmulas en la hoja
+  return { rol: 'apoyo', salon: null, usuario: nombre };
 }
 
 function verificarAdmin_(token) {
