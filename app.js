@@ -226,17 +226,86 @@ function renderInicio() {
   $('chips').innerHTML = [`<b>${r.salones.length}</b> salones`, `<b>${total}</b> charlas`, `<b>${reg}</b> registradas`,
     r.hoy ? `Hoy: <b>${esc(r.hoy)}</b>` : `<b>${r.dias.length}</b> días`]
     .map((x) => `<span class="chip">${x}</span>`).join('');
-  $('gridSalones').innerHTML = r.salones.length ? r.salones.map((s) => {
+  const pista = $('gridSalones');
+  const posicion = pista.scrollLeft; // al refrescar no se pierde el lugar del carrusel
+  pista.innerHTML = r.salones.length ? r.salones.map((s, i) => {
     const pct = s.total ? Math.round((s.registradas / s.total) * 100) : 0;
-    return `<button type="button" class="tarjeta-salon${s.total && pct === 100 ? ' completo' : ''}" data-salon="${esc(s.salon)}">
-        <span class="ph"><span class="nombre">${esc(s.salon)}</span><span class="pct">${pct}%</span></span>
+    const dias = r.dias.map((d) => {
+      const tiene = (s.dias || []).some((x) => norm(x) === norm(d));
+      const cls = !tiene ? 'no' : (norm(d) === norm(r.hoy) ? 'hoy' : '');
+      return `<span class="${cls}" title="${esc(d)}${tiene ? '' : ': sin charlas'}">${esc(String(d).slice(0, 3))}</span>`;
+    }).join('');
+    return `<button type="button" class="tarjeta-salon${s.total && pct === 100 ? ' completo' : ''}" data-salon="${esc(s.salon)}"
+        aria-roledescription="diapositiva" aria-label="${esc(s.salon)}, ${i + 1} de ${r.salones.length}">
+        <span class="ph"><small>Salón</small><span class="nombre">${esc(s.salon)}</span><span class="pct">${pct}%</span></span>
         <span class="bd">
           <span class="avance">${s.registradas} / ${s.total} charlas registradas</span>
           <span class="bar" aria-hidden="true"><i style="width:${pct}%"></i></span>
+          <span class="dias-mini" aria-hidden="true">${dias}</span>
+          <span class="entrar">Entrar →</span>
         </span>
       </button>`;
   }).join('') : '<p class="vacio">No hay salones activos en la hoja "Salones".</p>';
+  $('carNav').hidden = r.salones.length < 2;
+  $('carPuntos').innerHTML = r.salones.map((s, i) =>
+    `<button type="button" class="car-punto" data-i="${i}" aria-label="Ir a ${esc(s.salon)}"></button>`).join('');
+  if (!carrusel.iniciado) {
+    // Primera vez: mostrar el último salón usado en esta pestaña.
+    carrusel.iniciado = true;
+    const ult = leerUltimoSalon();
+    const i = r.salones.findIndex((s) => norm(s.salon) === norm(ult));
+    if (i > 0) requestAnimationFrame(() => carrusel.ir(i, false));
+  } else {
+    pista.style.scrollBehavior = 'auto';
+    pista.scrollLeft = posicion;
+    pista.style.scrollBehavior = '';
+  }
+  carrusel.actualizar();
 }
+
+// ---------- Carrusel de salones ----------
+const carrusel = {
+  iniciado: false,
+  tarjetas() { return [...$('gridSalones').querySelectorAll('.tarjeta-salon')]; },
+  /** Índice de la primera tarjeta visible. */
+  actual() {
+    const pista = $('gridSalones');
+    const ts = this.tarjetas();
+    if (!ts.length) return 0;
+    const base = ts[0].offsetLeft;
+    let mejor = 0;
+    ts.forEach((t, i) => {
+      if (Math.abs(t.offsetLeft - base - pista.scrollLeft) < Math.abs(ts[mejor].offsetLeft - base - pista.scrollLeft)) mejor = i;
+    });
+    return mejor;
+  },
+  /** Cuántas tarjetas caben completas en pantalla. */
+  visibles() {
+    const ts = this.tarjetas();
+    if (ts.length < 2) return 1;
+    const paso = ts[1].offsetLeft - ts[0].offsetLeft;
+    return Math.max(1, Math.floor(($('gridSalones').clientWidth - 16) / paso));
+  },
+  ir(i, suave) {
+    const ts = this.tarjetas();
+    if (!ts.length) return;
+    i = Math.max(0, Math.min(i, ts.length - 1));
+    $('gridSalones').scrollTo({ left: ts[i].offsetLeft - ts[0].offsetLeft, behavior: suave === false ? 'auto' : 'smooth' });
+  },
+  mover(dir) { this.ir(this.actual() + dir * this.visibles()); },
+  actualizar() {
+    const pista = $('gridSalones');
+    const ts = this.tarjetas();
+    const i = this.actual();
+    const v = this.visibles();
+    document.querySelectorAll('#carPuntos .car-punto').forEach((p, k) => p.setAttribute('aria-current', String(k >= i && k < i + v)));
+    $('carPrev').disabled = pista.scrollLeft < 4;
+    $('carNext').disabled = pista.scrollLeft + pista.clientWidth >= pista.scrollWidth - 4 || ts.length < 2;
+  }
+};
+
+function leerUltimoSalon() { try { return sessionStorage.getItem('cmn2026_ultimo') || ''; } catch (e) { return ''; } }
+function guardarUltimoSalon(s) { try { sessionStorage.setItem('cmn2026_ultimo', s); } catch (e) { /* sin almacenamiento */ } }
 
 // ---------------------------------------------------------------------------
 //  Pantalla 2: PIN
@@ -280,6 +349,7 @@ async function mostrarSalon(nombre, dia) {
   if (!ses) return mostrarPin(nombre);
 
   const clave = norm(nombre);
+  guardarUltimoSalon(nombre);
   if (estado.salonClave !== clave) {
     estado.salonClave = clave;
     estado.salon = null;
@@ -928,6 +998,28 @@ function iniciar() {
     ir('#/');
   });
 
+  // Carrusel: flechas, puntos, teclado y posición al deslizar
+  let rafCarrusel = 0;
+  $('gridSalones').addEventListener('scroll', () => {
+    cancelAnimationFrame(rafCarrusel);
+    rafCarrusel = requestAnimationFrame(() => carrusel.actualizar());
+  }, { passive: true });
+  window.addEventListener('resize', () => carrusel.actualizar());
+  $('carPrev').addEventListener('click', () => carrusel.mover(-1));
+  $('carNext').addEventListener('click', () => carrusel.mover(1));
+  $('carPuntos').addEventListener('click', (e) => {
+    const p = e.target.closest('[data-i]');
+    if (p) carrusel.ir(Number(p.dataset.i));
+  });
+  $('gridSalones').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const ts = carrusel.tarjetas();
+    const i = Math.max(0, ts.indexOf(document.activeElement));
+    const j = Math.max(0, Math.min(ts.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)));
+    ts[j].focus({ preventScroll: true });
+    carrusel.ir(j);
+  });
   $('gridSalones').addEventListener('click', (e) => {
     const b = e.target.closest('[data-salon]');
     if (b) ir(hashSalon(b.dataset.salon));

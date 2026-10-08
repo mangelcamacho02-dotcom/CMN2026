@@ -73,6 +73,27 @@ async function paso(nombre, fn) {
     await page.screenshot({ path: path.join(CAPTURAS, '1_inicio.png'), fullPage: true });
   });
 
+  await paso('Carrusel de salones: flechas, puntos y deslizar', async () => {
+    const pista = page.locator('#gridSalones');
+    assert.strictEqual(await page.locator('#carPuntos .car-punto').count(), 10);
+    assert.ok(await page.locator('#carPrev').isDisabled(), 'al inicio la flecha izquierda debe estar desactivada');
+    assert.strictEqual(await page.getAttribute('#carPuntos .car-punto >> nth=0', 'aria-current'), 'true');
+    await page.click('#carNext');
+    await page.waitForFunction(() => document.getElementById('gridSalones').scrollLeft > 50);
+    await page.waitForTimeout(500);
+    assert.strictEqual(await page.getAttribute('#carPuntos .car-punto >> nth=1', 'aria-current'), 'true');
+    assert.ok(!(await page.locator('#carPrev').isDisabled()));
+    await page.click('#carPuntos .car-punto >> nth=9');
+    await page.waitForTimeout(700);
+    assert.ok(await page.locator('#carNext').isDisabled(), 'al final la flecha derecha debe estar desactivada');
+    const anchoPagina = await page.evaluate(() => document.documentElement.scrollWidth);
+    assert.ok(anchoPagina <= 390, 'la página no debe desbordar a lo ancho: ' + anchoPagina);
+    await page.screenshot({ path: path.join(CAPTURAS, '1b_carrusel_final.png') });
+    await page.click('#carPuntos .car-punto >> nth=0');
+    await page.waitForTimeout(700);
+    assert.ok(await pista.evaluate((el) => el.scrollLeft < 5));
+  });
+
   await paso('PIN de otro salón es rechazado en pantalla', async () => {
     await page.click('.tarjeta-salon:has-text("Roble 2")');
     await page.fill('#inpPin', pin('Real 1'));

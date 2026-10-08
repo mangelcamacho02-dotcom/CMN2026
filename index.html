@@ -41,7 +41,14 @@
     <section id="vInicio" class="vista" hidden>
       <div id="bloqueoInicio" class="aviso aviso-naranja" hidden>La edición está bloqueada: los encargados solo pueden consultar.</div>
       <div class="step"><div class="step-n">1</div><div><h2>Elija su salón</h2><small>Necesitará el PIN de su salón</small></div></div>
-      <div id="gridSalones" class="grid-salones" aria-live="polite"></div>
+      <div class="carrusel" role="region" aria-roledescription="carrusel" aria-label="Salones">
+        <div id="gridSalones" class="car-pista" tabindex="-1"></div>
+      </div>
+      <div class="car-nav" id="carNav" hidden>
+        <button type="button" class="car-flecha" id="carPrev" aria-label="Salón anterior">‹</button>
+        <div class="car-puntos" id="carPuntos"></div>
+        <button type="button" class="car-flecha" id="carNext" aria-label="Salón siguiente">›</button>
+      </div>
       <p id="errorInicio" class="msg-error" hidden></p>
       <div class="pie-inicio">
         <button id="btnAdmin" type="button" class="btn-discreto">Administrador</button>

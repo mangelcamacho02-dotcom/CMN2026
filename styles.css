@@ -135,27 +135,58 @@ main.ancho { max-width: 1280px; }
 .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--blue)); border-radius: 99px; transition: width .4s; }
 
 /* ======================= Pantalla 1: salones ======================= */
-.grid-salones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-@media (min-width: 680px) { .grid-salones { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (min-width: 980px) { .grid-salones { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+/* Carrusel: se desliza con el dedo; en el celular se asoma la siguiente tarjeta. */
+.carrusel { margin: 0 -16px; }
+.car-pista {
+  display: grid; grid-auto-flow: column; grid-auto-columns: min(80%, 300px); gap: 14px;
+  overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scroll-behavior: smooth;
+  scroll-padding: 0 16px; padding: 6px 16px 14px; scrollbar-width: none; outline: none;
+}
+.car-pista::-webkit-scrollbar { display: none; }
+@media (min-width: 680px) { .car-pista { grid-auto-columns: calc((100% - 32px - 28px) / 3); } }
+@media (min-width: 980px) { .car-pista { grid-auto-columns: calc((100% - 32px - 42px) / 4); } }
+@media (min-width: 680px) { .tarjeta-salon .nombre { font-size: 23px; } }
+.car-nav { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 2px; }
+.car-flecha {
+  flex: none; width: 48px; height: 48px; border-radius: 50%; cursor: pointer; touch-action: manipulation;
+  background: #fff; border: 1.5px solid var(--line); color: var(--navy); font-size: 28px; font-weight: 700; line-height: 1;
+  box-shadow: 0 2px 8px rgba(11, 47, 94, .08); display: grid; place-items: center; padding-bottom: 3px;
+}
+.car-flecha:disabled { opacity: .35; cursor: default; }
+.car-puntos { display: flex; flex-wrap: nowrap; justify-content: center; gap: 0; min-width: 0; }
+.car-punto { flex: none; width: 20px; height: 28px; border: 0; padding: 0; background: none; cursor: pointer; display: grid; place-items: center; }
+.car-punto::before { content: ""; width: 9px; height: 9px; border-radius: 99px; background: #c5d4e6; transition: all .2s; }
+.car-punto[aria-current="true"]::before { width: 18px; background: var(--orange); }
+
 .tarjeta-salon {
-  display: flex; flex-direction: column; padding: 0; text-align: left; overflow: hidden;
+  scroll-snap-align: start;
+  display: flex; flex-direction: column; padding: 0; text-align: left; overflow: hidden; box-shadow: 0 1px 3px rgba(11, 47, 94, .07);
   background: #fff; border: 1.5px solid var(--line); border-radius: 14px; cursor: pointer; touch-action: manipulation;
   transition: border-color .15s, box-shadow .2s, transform .2s;
 }
 .tarjeta-salon:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(11, 47, 94, .12); }
 .tarjeta-salon:focus-visible { outline: 3px solid rgba(10, 90, 160, .4); outline-offset: 2px; }
-.tarjeta-salon .ph { position: relative; min-height: 86px; padding: 12px 14px; background: var(--grad); overflow: hidden; display: flex; align-items: flex-end; }
+.tarjeta-salon .ph { position: relative; min-height: 150px; padding: 16px 18px; background: var(--grad); overflow: hidden; display: flex; align-items: flex-end; }
 .tarjeta-salon .ph::after {
-  content: ""; position: absolute; right: -34px; top: -34px; width: 96px; height: 96px; border-radius: 50%;
+  content: ""; position: absolute; right: -40px; top: -40px; width: 130px; height: 130px; border-radius: 50%;
   background: linear-gradient(200deg, #fbb03b, #f07a22); opacity: .85;
 }
-.tarjeta-salon .nombre { position: relative; z-index: 1; font-size: 20px; font-weight: 800; color: #fff; line-height: 1.15; text-shadow: 0 1px 8px rgba(0, 0, 0, .25); }
+.tarjeta-salon .ph::before {
+  content: ""; position: absolute; left: -50px; bottom: -70px; width: 150px; height: 150px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 65%, #29b6d1 0%, #1d6fb8 60%); opacity: .35;
+}
+.tarjeta-salon .ph small { position: absolute; z-index: 1; left: 18px; top: 16px; color: #cfe3ef; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.tarjeta-salon .nombre { position: relative; z-index: 1; font-size: 28px; font-weight: 800; color: #fff; line-height: 1.15; text-shadow: 0 1px 8px rgba(0, 0, 0, .25); }
 .tarjeta-salon .pct {
   position: absolute; z-index: 2; top: 10px; right: 10px; min-width: 40px; height: 26px; padding: 0 8px; border-radius: 99px;
   background: #fff; color: var(--navy); font-size: 12.5px; font-weight: 800; display: grid; place-items: center;
 }
-.tarjeta-salon .bd { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 8px; }
+.tarjeta-salon .bd { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+.tarjeta-salon .dias-mini { display: flex; flex-wrap: wrap; gap: 5px; }
+.tarjeta-salon .dias-mini span { font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--info-soft); color: var(--navy); }
+.tarjeta-salon .dias-mini span.no { background: none; color: #b3bfcc; text-decoration: line-through; }
+.tarjeta-salon .dias-mini span.hoy { background: var(--orange); color: #fff; }
+.tarjeta-salon .entrar { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); font-size: 14px; font-weight: 800; color: var(--teal); }
 .tarjeta-salon .avance { font-size: 13.5px; color: var(--muted); font-weight: 600; }
 .tarjeta-salon.completo .ph { background: linear-gradient(135deg, #12a5a5, #0a6a7a); }
 .pie-inicio { margin-top: 24px; text-align: center; }
@@ -369,7 +400,7 @@ h4.sub::after { content: ""; flex: 1; height: 2px; background: linear-gradient(9
   .top h1 { max-width: 100%; }
   .chips { max-width: 100%; }
   .panel { padding: 16px; }
-  .tarjeta-salon .nombre { font-size: 18px; }
+  .tarjeta-salon .nombre { font-size: 26px; }
   .dock .btn { padding: 12px 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
