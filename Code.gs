@@ -1,5 +1,9 @@
 /**
  * ============================================================================
+ *  ESTE es el archivo que va en Apps Script (Extensiones → Apps Script).
+ *  La primera línea de código debe ser:  var ZONA_HORARIA = 'America/Costa_Rica';
+ *  (app.js, index.html y styles.css van en GitHub, NO aquí).
+ * ============================================================================
  *  CMN 2026 — Registro de asistencia por charla
  *  Backend (Google Apps Script) vinculado a la hoja "BD_Asistencia_CMN2026".
  * ============================================================================

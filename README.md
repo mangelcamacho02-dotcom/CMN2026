@@ -184,6 +184,7 @@ Si cambia `index.html`, `styles.css` o `app.js` en GitHub, GitHub Pages se actua
 | "Falta la columna … en la hoja …" | Se renombró o borró un encabezado. Restáurelo. |
 | El día de "hoy" no se selecciona o la lista de atrasadas está rara | Revise `Config → Fecha_inicio` (paso 2). |
 | Al probar la URL sale `"Use POST para esta acción."` | Es la primera versión de `Code.gs`. Pegue el `Code.gs` actual y publique una nueva versión (paso 7). |
+| `ReferenceError: document is not defined` en Apps Script | Pegó `app.js` en Apps Script por error. Allí va **solo `Code.gs`** (paso 3). `app.js` va en GitHub. |
 | Hice cambios en `Code.gs` y no se ven | Publique una nueva versión (paso 7). |
 
 ## 10. Seguridad y privacidad

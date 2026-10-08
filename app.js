@@ -1,4 +1,7 @@
 /* =========================================================================
+   ⚠ ESTE ARCHIVO NO VA EN APPS SCRIPT. Va en GitHub, junto a index.html.
+     En Apps Script se pega únicamente Code.gs.
+   =========================================================================
    CMN 2026 — Registro de asistencia por charla (frontend)
    HTML + CSS + JavaScript puro. Todos los datos vienen de la hoja de Google
    a través del Apps Script publicado como aplicación web.
