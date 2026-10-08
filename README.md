@@ -115,6 +115,10 @@ Debe tener 4 pestañas: `Actividades`, `Salones`, `Config` y `Bitacora`. No les 
 
 > Si los archivos están en otra rama (por ejemplo la rama donde se desarrolló), primero únalos a `main` (Pull request → Merge) o elija esa rama en el paso 4.
 
+### Logo (opcional)
+
+La página usa la misma línea gráfica del congreso (Montserrat, azul marino, naranja y turquesa). Para mostrar los logos del CMC arriba a la izquierda, suba al repositorio una imagen llamada **`logos.png`** (fondo transparente, unos 600 × 130 px) junto a `index.html`: **Add file → Upload files**. Si no existe, simplemente no se muestra.
+
 ## 6. Uso diario: cambios desde la hoja
 
 Todo se cambia **en la hoja**; en el celular basta tocar **↻ Recargar** (o esperar: la vista se actualiza sola cada 60 segundos).

@@ -66,7 +66,8 @@ async function paso(nombre, fn) {
 
   await paso('Inicio: título del evento y 10 tarjetas de salón con avance', async () => {
     await page.waitForSelector('.tarjeta-salon');
-    assert.strictEqual(await page.textContent('#tituloEvento'), 'Congreso Médico Nacional 2026');
+    assert.strictEqual(await page.textContent('#kicker'), 'Congreso Médico Nacional 2026');
+    assert.strictEqual(await page.textContent('#tituloEvento'), 'Asistencia');
     assert.strictEqual(await page.locator('.tarjeta-salon').count(), 10);
     assert.match(await page.locator('.tarjeta-salon', { hasText: 'Roble 2' }).textContent(), /0 \/ 66 charlas registradas/);
     await page.screenshot({ path: path.join(CAPTURAS, '1_inicio.png'), fullPage: true });

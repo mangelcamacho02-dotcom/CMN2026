@@ -65,7 +65,6 @@ function fechaHora(iso) {
 function horaActual() {
   return new Date().toLocaleTimeString('es-CR', { timeZone: ZONA, hour: 'numeric', minute: '2-digit', hour12: true });
 }
-function abreviarDia(d) { return String(d).slice(0, 3); }
 function errorApp(mensaje, codigo) { const e = new Error(mensaje); e.codigo = codigo || 'ERROR'; return e; }
 
 let toastTimer = null;
@@ -185,8 +184,12 @@ function mostrarVista(id, titulo, subtitulo, conVolver) {
   estado.vista = id;
   ['vInicio', 'vPin', 'vSalon', 'vAdmin'].forEach((v) => { $(v).hidden = v !== id; });
   $('app').classList.toggle('ancho', id === 'vAdmin');
-  $('tituloEvento').textContent = titulo || (estado.inicio && estado.inicio.evento) || 'Congreso';
+  $('top').classList.toggle('compacto', id !== 'vInicio');
+  $('top').classList.toggle('ancho', id === 'vAdmin');
+  $('kicker').textContent = (estado.inicio && estado.inicio.evento) || 'Congreso Médico Nacional 2026';
+  $('tituloEvento').textContent = titulo || 'Asistencia';
   $('subtitulo').textContent = subtitulo || '';
+  if (id !== 'vInicio') $('chips').innerHTML = '';
   $('btnVolver').hidden = !conVolver;
   $('btnSalir').hidden = !(Sesion.hayAlguna() && id !== 'vPin');
   $('cargando').hidden = true;
@@ -199,12 +202,12 @@ function mostrarError(id, msg) { const el = $(id); el.textContent = msg || ''; e
 //  Pantalla 1: inicio
 // ---------------------------------------------------------------------------
 async function mostrarInicio() {
-  mostrarVista('vInicio', null, 'Registro de asistencia', false);
+  mostrarVista('vInicio', null, 'Registro de asistentes por charla. Toque su salón y anote cuántas personas hubo en cada charla.', false);
   mostrarError('errorInicio', '');
   if (estado.inicio) renderInicio(); else cargando(true);
   try {
     estado.inicio = await apiOk('getSalones');
-    if (estado.vista === 'vInicio') { $('tituloEvento').textContent = estado.inicio.evento; renderInicio(); }
+    if (estado.vista === 'vInicio') { $('kicker').textContent = estado.inicio.evento; renderInicio(); }
   } catch (e) {
     mostrarError('errorInicio', e.message);
   } finally {
@@ -215,12 +218,19 @@ async function mostrarInicio() {
 function renderInicio() {
   const r = estado.inicio;
   $('bloqueoInicio').hidden = !r.bloqueo;
+  const total = r.salones.reduce((n, s) => n + s.total, 0);
+  const reg = r.salones.reduce((n, s) => n + s.registradas, 0);
+  $('chips').innerHTML = [`<b>${r.salones.length}</b> salones`, `<b>${total}</b> charlas`, `<b>${reg}</b> registradas`,
+    r.hoy ? `Hoy: <b>${esc(r.hoy)}</b>` : `<b>${r.dias.length}</b> días`]
+    .map((x) => `<span class="chip">${x}</span>`).join('');
   $('gridSalones').innerHTML = r.salones.length ? r.salones.map((s) => {
     const pct = s.total ? Math.round((s.registradas / s.total) * 100) : 0;
-    return `<button type="button" class="tarjeta-salon" data-salon="${esc(s.salon)}">
-        <span class="nombre">${esc(s.salon)}</span>
-        <span class="avance">${s.registradas} / ${s.total} charlas registradas</span>
-        <span class="barra-avance" aria-hidden="true"><span style="width:${pct}%"></span></span>
+    return `<button type="button" class="tarjeta-salon${s.total && pct === 100 ? ' completo' : ''}" data-salon="${esc(s.salon)}">
+        <span class="ph"><span class="nombre">${esc(s.salon)}</span><span class="pct">${pct}%</span></span>
+        <span class="bd">
+          <span class="avance">${s.registradas} / ${s.total} charlas registradas</span>
+          <span class="bar" aria-hidden="true"><i style="width:${pct}%"></i></span>
+        </span>
       </button>`;
   }).join('') : '<p class="vacio">No hay salones activos en la hoja "Salones".</p>';
 }
@@ -274,7 +284,7 @@ async function mostrarSalon(nombre, dia) {
     estado.dia = null;
   }
   if (dia) estado.dia = dia;
-  mostrarVista('vSalon', nombre, ses.rol === 'admin' ? 'Modo administrador' : 'Encargado de salón', true);
+  mostrarVista('vSalon', nombre, ses.rol === 'admin' ? 'Modo administrador · puede corregir cualquier charla' : 'Anote los asistentes de cada charla y toque Guardar.', true);
   mostrarError('errorSalon', '');
   if (estado.salon) renderSalon(); else { $('listaActividades').innerHTML = ''; $('tabsDias').innerHTML = ''; cargando(true); }
   await cargarSalon(false);
@@ -358,14 +368,7 @@ function renderSalon() {
   if (!r) return;
   const puede = r.puedeGuardar;
 
-  // Pestañas de días (solo activos los días con actividades)
-  $('tabsDias').innerHTML = r.dias.map((d) => {
-    const sel = norm(d.dia) === norm(estado.dia);
-    const esHoy = norm(d.dia) === norm(r.hoy);
-    return `<button type="button" class="tab-dia" role="tab" data-dia="${esc(d.dia)}" aria-selected="${sel}"
-      ${d.activo ? '' : 'disabled'} title="${esc(d.dia)}${d.activo ? '' : ' (sin actividades)'}">
-      ${esc(abreviarDia(d.dia))}${esHoy ? '<span class="hoy">hoy</span>' : ''}</button>`;
-  }).join('');
+  renderDias();
 
   $('bloqueoSalon').hidden = puede;
   $('bloqueoSalon').textContent = r.bloqueo && !puede
@@ -387,6 +390,28 @@ function renderSalon() {
       </section>`).join('');
   }
   actualizarResumen();
+}
+
+/** Pestañas de días: solo se activan los días con charlas; la burbuja naranja cuenta cambios sin guardar. */
+function renderDias() {
+  const r = estado.salon;
+  if (!r) return;
+  $('tabsDias').innerHTML = r.dias.map((d) => {
+    const sel = norm(d.dia) === norm(estado.dia);
+    const esHoy = norm(d.dia) === norm(r.hoy);
+    const acts = r.actividades.filter((a) => norm(a.dia) === norm(d.dia));
+    const reg = acts.filter((a) => a.asistentes != null).length;
+    const pend = acts.filter((a) => estado.borradores.has(a.id)).length;
+    const detalle = d.activo ? `${reg} de ${acts.length}` : 'sin charlas';
+    return `<button type="button" class="tab-dia" role="tab" data-dia="${esc(d.dia)}" aria-selected="${sel}"
+      ${d.activo ? '' : 'disabled'} title="${esc(d.dia)}${d.activo ? `: ${reg} de ${acts.length} charlas registradas` : ' (sin actividades)'}">
+      ${pend ? `<span class="bdg" title="Cambios sin guardar">${pend}</span>` : ''}
+      <b>${esc(d.dia)}</b><small>${esHoy ? '<span class="hoy">Hoy · </span>' : ''}${detalle}</small></button>`;
+  }).join('');
+  // Centra el día elegido dentro de la tira de pestañas (sin mover la página).
+  const tira = $('tabsDias');
+  const act = tira.querySelector('[aria-selected="true"]');
+  if (act) tira.scrollLeft = act.offsetLeft - (tira.clientWidth - act.offsetWidth) / 2;
 }
 
 function htmlExpositores(a) {
@@ -462,12 +487,39 @@ function actualizarResumen() {
   const reg = acts.filter((a) => a.asistentes != null);
   $('resTotal').textContent = reg.reduce((s, a) => s + a.asistentes, 0).toLocaleString('es-CR');
   $('resCharlas').textContent = `${reg.length} / ${acts.length}`;
+  $('resBarra').style.width = (acts.length ? Math.round((reg.length / acts.length) * 100) : 0) + '%';
   const ids = new Set(estado.salon ? estado.salon.actividades.map((a) => a.id) : []);
   const n = [...estado.borradores.keys()].filter((id) => ids.has(id)).length;
+  const errores = [...estado.errores.keys()].filter((id) => ids.has(id)).length;
+  $('dockSum').innerHTML = n
+    ? `<b>${n} cambio${n === 1 ? '' : 's'} sin guardar</b>${errores ? errores + ' con error · toque para reintentar' : 'Toque Guardar todo'}`
+    : `<b>Todo guardado</b>${esc(estado.dia || '')}: ${reg.length} de ${acts.length} charlas registradas`;
   const btn = $('btnGuardarTodo');
   btn.textContent = n ? `Guardar todo (${n})` : 'Guardar todo';
+  renderBurbujas();
   btn.disabled = !n || !(estado.salon && estado.salon.puedeGuardar);
   $('barraGuardarTodo').hidden = !acts.length || !(estado.salon && estado.salon.puedeGuardar);
+}
+
+/** Actualiza solo las burbujas de cambios sin guardar de las pestañas (sin redibujarlas). */
+function renderBurbujas() {
+  const r = estado.salon;
+  if (!r) return;
+  document.querySelectorAll('#tabsDias .tab-dia').forEach((b) => {
+    const pend = r.actividades.filter((a) => norm(a.dia) === norm(b.dataset.dia) && estado.borradores.has(a.id)).length;
+    let bdg = b.querySelector('.bdg');
+    if (!pend) { if (bdg) bdg.remove(); return; }
+    if (!bdg) { bdg = document.createElement('span'); bdg.className = 'bdg'; bdg.title = 'Cambios sin guardar'; b.prepend(bdg); }
+    bdg.textContent = pend;
+  });
+  const sel = r.actividades.filter((a) => a.asistentes != null);
+  document.querySelectorAll('#tabsDias .tab-dia:not(:disabled) small').forEach((sm) => {
+    const dia = sm.closest('.tab-dia').dataset.dia;
+    const acts = r.actividades.filter((a) => norm(a.dia) === norm(dia));
+    const reg = sel.filter((a) => norm(a.dia) === norm(dia)).length;
+    const hoy = sm.querySelector('.hoy');
+    sm.innerHTML = (hoy ? hoy.outerHTML : '') + `${reg} de ${acts.length}`;
+  });
 }
 
 function reemplazarActividad(nueva) {
@@ -562,7 +614,7 @@ const adm = { borradores: new Map(), errores: new Map(), guardando: new Set() };
 async function mostrarAdmin() {
   const ses = Sesion.admin();
   if (!ses) return mostrarPin(null);
-  mostrarVista('vAdmin', 'Panel de administrador', estado.inicio ? estado.inicio.evento : '', true);
+  mostrarVista('vAdmin', 'Administración', 'Totales, charlas sin registrar, correcciones y bitácora.', true);
   mostrarError('errorAdmin', '');
   if (estado.admin) renderAdmin(); else cargando(true);
   await cargarAdmin(false);
