@@ -33,6 +33,8 @@ const estado = {
   errores: new Map(),      // id → mensaje de error del último intento
   guardando: new Set(),    // ids que se están guardando
   renderPendiente: false,  // llegaron datos nuevos mientras alguien escribía
+  editando: null,          // id de la charla cuyo expositor se está editando
+  moviendo: false,         // hay un cambio de posición en curso
   ultimaCarga: 0,
   avisoNombre: false,
   admin: null,             // respuesta de getResumenAdmin
@@ -206,8 +208,9 @@ function mostrarVista(id, titulo, subtitulo) {
 function cargando(si) { $('cargando').hidden = !si; }
 function mostrarError(id, msg) { const el = $(id); el.textContent = msg || ''; el.hidden = !msg; }
 
-/** ¿Hay alguien escribiendo en un campo de asistentes? */
+/** ¿Hay alguien escribiendo en un campo de asistentes o editando un expositor? */
 function escribiendo() {
+  if (estado.editando) return true;
   const a = document.activeElement;
   return !!(a && a.tagName === 'INPUT' && (a.dataset.id || a.dataset.aid));
 }
@@ -447,6 +450,7 @@ function firmaTabla(acts) {
 /** Tabla de charlas del salón y día elegidos. */
 function renderTabla() {
   estado.renderPendiente = false;
+  estado.editando = null;   // redibujar cierra el formulario de expositor
   const r = estado.datos;
   if (!r) return;
   const acts = actsDe(estado.salon, estado.dia);
@@ -462,7 +466,7 @@ function renderTabla() {
           <div class="b-txt"><h3>${esc(b.simposio || 'Sin simposio')}</h3>${b.entidad ? `<span class="entidad">${esc(b.entidad)}</span>` : ''}</div>
           <div class="b-meta">${b.rango ? `<span class="rango">${esc(b.rango)}</span>` : ''}<span class="b-cuenta">${regB}/${b.acts.length}</span></div>
         </header>
-        <div class="filas">${b.acts.map(htmlFila).join('')}</div>
+        <div class="filas">${b.acts.map((a, i) => htmlFila(a, i === 0, i === b.acts.length - 1)).join('')}</div>
       </section>`;
     }).join('');
   }
@@ -495,15 +499,23 @@ function htmlExpositores(a) {
   return lineas.join('');
 }
 
-function htmlFila(a) {
+function htmlFila(a, primera, ultima) {
   const valor = estado.borradores.has(a.id) ? estado.borradores.get(a.id) : (a.asistentes == null ? '' : String(a.asistentes));
   const st = estadoFila(a);
   const puede = puedeGuardar();
+  const ocupado = estado.moviendo || !puede;
   return `<div class="fila ${st.clase}" id="c-${esc(a.id)}" data-id="${esc(a.id)}">
-    <div class="c-hora"><b>${esc(a.hora)}</b>${marcaTiempo(a)}</div>
+    <div class="c-hora">
+      <b>${esc(a.hora)}</b><span class="marca">${marcaTiempo(a)}</span>
+      <span class="mover" aria-label="Cambiar posición">
+        <button type="button" class="btn-mover" data-mover="-1" data-mid="${esc(a.id)}" title="Subir: pasa al horario de la charla anterior" ${primera || ocupado ? 'disabled' : ''}>▲</button>
+        <button type="button" class="btn-mover" data-mover="1" data-mid="${esc(a.id)}" title="Bajar: pasa al horario de la charla siguiente" ${ultima || ocupado ? 'disabled' : ''}>▼</button>
+      </span>
+    </div>
     <div class="c-charla">
       <div class="c-titulo">${esc(a.charla)}${a.estado === 'PENDIENTE' ? ' <span class="etq-pendiente">PENDIENTE — expositor por confirmar</span>' : ''}</div>
       ${htmlExpositores(a)}
+      ${puede ? `<button type="button" class="btn-editar" data-editar="${esc(a.id)}">✎ Editar expositor</button>` : ''}
     </div>
     <div class="c-num">
       <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="6" placeholder="—"
@@ -541,11 +553,11 @@ function actualizarFila(id) {
   const a = actividad(id);
   if (!fila || !a) return;
   const st = estadoFila(a);
-  fila.className = 'fila ' + st.clase;
+  fila.className = 'fila ' + st.clase + (estado.editando === id ? ' editando' : '');
   const est = fila.querySelector('.estado');
   est.className = 'estado ' + st.estado;
   est.textContent = st.texto;
-  fila.querySelector('.c-hora').innerHTML = `<b>${esc(a.hora)}</b>${marcaTiempo(a)}`;
+  fila.querySelector('.c-hora .marca').innerHTML = marcaTiempo(a);
   const inp = fila.querySelector('input');
   inp.disabled = !puedeGuardar();
   if (!estado.borradores.has(id) && document.activeElement !== inp) inp.value = a.asistentes == null ? '' : String(a.asistentes);
@@ -709,6 +721,126 @@ function elegirDia(dia) {
   renderSalon();
   window.scrollTo(0, 0);
   enfocarPrimeraVacia();
+}
+
+// ---------------------------------------------------------------------------
+//  Editar expositor y mover charlas
+// ---------------------------------------------------------------------------
+/** Abre, dentro de la fila, el formulario para editar nombre, código y correo. */
+function abrirEditor(id) {
+  if (estado.editando && estado.editando !== id) cerrarEditor();
+  const a = actividad(id);
+  const fila = document.getElementById('c-' + id);
+  if (!a || !fila || fila.querySelector('.editor')) return;
+  estado.editando = id;
+  // Se precarga por posición lo que hay en la hoja (incluidos datos sin emparejar).
+  const nombres = (a.expositor || '').split(/\s*\/\s*/).map((x) => x.trim()).filter((x) => x && norm(x) !== 'pendiente');
+  const codigos = (a.codigo || '').split(/\s*\/\s*/).map((x) => x.trim());
+  const correos = (a.correo || '').split(/\s*\/\s*/).map((x) => x.trim());
+  const limpio = (x) => (/^[—–-]$/.test(x || '') ? '' : (x || ''));
+  const personas = nombres.length ? nombres.map((n, i) => ({ nombre: n, codigo: limpio(codigos[i]), correo: limpio(correos[i]) }))
+    : [{ nombre: '', codigo: '', correo: '' }];
+  const e = a.expositores || {};
+  const aviso = (e.codigosSueltos && e.codigosSueltos.length) || (e.correosSueltos && e.correosSueltos.length)
+    ? '<p class="ed-aviso">En la hoja la cantidad de códigos o correos no coincide con la de expositores. Revise que cada dato quede con la persona correcta.</p>' : '';
+  const div = document.createElement('div');
+  div.className = 'editor';
+  div.innerHTML = `<div class="ed-cab"><b>Expositor(es) de esta charla</b><small>Deje todo vacío si aún no está confirmado.</small></div>
+    ${aviso}
+    <div class="ed-encab" aria-hidden="true"><span>Nombre</span><span>Código médico</span><span>Correo</span><span></span></div>
+    <div class="ed-personas">${personas.map(htmlPersona).join('')}</div>
+    <button type="button" class="btn-link-ed" data-ed-agregar>+ Agregar otro expositor</button>
+    <p class="ed-error" hidden></p>
+    <div class="ed-acciones">
+      <button type="button" class="btn btn-secundario" data-ed-cancelar>Cancelar</button>
+      <button type="button" class="btn btn-primario" data-ed-guardar>Guardar cambios</button>
+    </div>`;
+  fila.appendChild(div);
+  fila.classList.add('editando');
+  const primero = div.querySelector('input');
+  if (primero) primero.focus();
+}
+
+function htmlPersona(p) {
+  return `<div class="ed-persona">
+    <input type="text" data-ed="nombre" maxlength="120" placeholder="Dr(a). Nombre y apellidos" value="${esc(p.nombre)}" aria-label="Nombre del expositor">
+    <input type="text" data-ed="codigo" maxlength="30" placeholder="Código" value="${esc(p.codigo)}" aria-label="Código médico">
+    <input type="email" data-ed="correo" maxlength="120" placeholder="correo@ejemplo.com" value="${esc(p.correo)}" aria-label="Correo">
+    <button type="button" class="btn-quitar" data-ed-quitar title="Quitar este expositor">✕</button>
+  </div>`;
+}
+
+function cerrarEditor() {
+  const id = estado.editando;
+  estado.editando = null;
+  const fila = id && document.getElementById('c-' + id);
+  if (fila) {
+    const ed = fila.querySelector('.editor');
+    if (ed) ed.remove();
+    fila.classList.remove('editando');
+  }
+  if (estado.renderPendiente) renderTabla();
+}
+
+async function guardarEditor() {
+  const id = estado.editando;
+  const fila = id && document.getElementById('c-' + id);
+  if (!fila) return;
+  const ed = fila.querySelector('.editor');
+  const personas = [...ed.querySelectorAll('.ed-persona')].map((p) => ({
+    nombre: p.querySelector('[data-ed="nombre"]').value.trim(),
+    codigo: p.querySelector('[data-ed="codigo"]').value.trim(),
+    correo: p.querySelector('[data-ed="correo"]').value.trim()
+  }));
+  const err = ed.querySelector('.ed-error');
+  const malo = personas.find((p) => p.correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.correo));
+  if (malo) { err.textContent = `El correo "${malo.correo}" no es válido.`; err.hidden = false; return; }
+  if (personas.some((p) => !p.nombre && (p.codigo || p.correo))) { err.textContent = 'Falta el nombre de un expositor.'; err.hidden = false; return; }
+  const btn = ed.querySelector('[data-ed-guardar]');
+  btn.disabled = true; btn.textContent = 'Guardando…'; err.hidden = true;
+  avisarNombre();
+  try {
+    const r = await apiOk('editarExpositor', { id, personas, usuario: nombreUsuario() });
+    reemplazarActividad(r.actividad);
+    estado.editando = null;
+    renderTabla();
+    toast('Expositor actualizado.', 'ok');
+  } catch (e) {
+    err.textContent = e.message; err.hidden = false;
+    btn.disabled = false; btn.textContent = 'Guardar cambios';
+  }
+}
+
+/** Sube o baja una charla dentro de su simposio (intercambia horario con la vecina). */
+async function moverCharla(id, direccion) {
+  if (estado.moviendo || !puedeGuardar()) return;
+  if (estado.editando) cerrarEditor();
+  estado.moviendo = true;
+  document.querySelectorAll('#tabla .btn-mover').forEach((b) => { b.disabled = true; });
+  avisarNombre();
+  try {
+    const r = await apiOk('moverCharla', { id, direccion, usuario: nombreUsuario() });
+    r.actividades.forEach(reemplazarActividad);
+    ordenarLocal();
+    toast('Charla movida. Los horarios se intercambiaron.', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  } finally {
+    estado.moviendo = false;
+    renderTabla();
+    const btn = document.querySelector(`#c-${CSS.escape(id)} [data-mover="${direccion}"]`);
+    if (btn && !btn.disabled) btn.focus({ preventScroll: true });
+    const fila = document.getElementById('c-' + id);
+    if (fila) { fila.classList.add('recien-movida'); setTimeout(() => fila.classList.remove('recien-movida'), 1600); }
+  }
+}
+
+/** Mismo orden que el servidor: día, salón, hora de inicio y Orden. */
+function ordenarLocal() {
+  const r = estado.datos;
+  const idxDia = (d) => { const i = r.dias.findIndex((x) => norm(x) === norm(d)); return i < 0 ? 99 : i; };
+  r.actividades.sort((x, y) => (idxDia(x.dia) - idxDia(y.dia)) || x.salon.localeCompare(y.salon) ||
+    ((x.inicio == null ? 9999 : x.inicio) - (y.inicio == null ? 9999 : y.inicio)) || (x.orden - y.orden));
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,7 +1248,30 @@ function iniciar() {
   tabla.addEventListener('focusin', (e) => { if (e.target.matches('input[data-id]')) e.target.select(); });
   tabla.addEventListener('click', (e) => {
     const b = e.target.closest('[data-guardar]');
-    if (b) guardarUno(b.dataset.guardar);
+    if (b) return guardarUno(b.dataset.guardar);
+    const m = e.target.closest('[data-mover]');
+    if (m && !m.disabled) return moverCharla(m.dataset.mid, Number(m.dataset.mover));
+    const ed = e.target.closest('[data-editar]');
+    if (ed) return abrirEditor(ed.dataset.editar);
+    if (e.target.closest('[data-ed-agregar]')) {
+      const lista = e.target.closest('.editor').querySelector('.ed-personas');
+      lista.insertAdjacentHTML('beforeend', htmlPersona({ nombre: '', codigo: '', correo: '' }));
+      lista.lastElementChild.querySelector('input').focus();
+      return;
+    }
+    if (e.target.closest('[data-ed-quitar]')) {
+      const lista = e.target.closest('.ed-personas');
+      e.target.closest('.ed-persona').remove();
+      if (!lista.children.length) lista.insertAdjacentHTML('beforeend', htmlPersona({ nombre: '', codigo: '', correo: '' }));
+      return;
+    }
+    if (e.target.closest('[data-ed-cancelar]')) return cerrarEditor();
+    if (e.target.closest('[data-ed-guardar]')) return guardarEditor();
+  });
+  tabla.addEventListener('keydown', (e) => {
+    if (!e.target.closest('.editor')) return;
+    if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); guardarEditor(); }
+    if (e.key === 'Escape') { e.preventDefault(); cerrarEditor(); }
   });
   // Si llegaron datos nuevos mientras escribía, se redibuja al salir del campo.
   tabla.addEventListener('focusout', () => {

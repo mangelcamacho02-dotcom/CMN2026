@@ -22,6 +22,9 @@
  *   - Las filas de Actividades se buscan siempre por su ID (ACT-0001...).
  *   - El sistema solo escribe en: Asistentes, Registrado_por, Fecha_registro
  *     (hoja Actividades), en la hoja Bitacora y en Config → Bloquear_edicion.
+ *     Además, cuando el personal lo pide expresamente desde la página:
+ *     Expositor, Codigo_medico, Correo y Estado (editar expositor) y
+ *     Hora y Orden (mover una charla). Todo queda en la Bitacora.
  *   - Toda escritura se hace dentro de un LockService para que varios
  *     encargados puedan guardar al mismo tiempo sin pisarse.
  *   - Registrar asistencia NO requiere PIN (solo lo usa el personal de apoyo).
@@ -40,7 +43,7 @@
 
 /** Zona horaria usada para "hoy", la hora actual y las horas de registro. */
 /** Versión de este archivo. Al abrir la URL de la app web debe aparecer este número. */
-var VERSION = '2026-10-08 computadora';
+var VERSION = '2026-10-09 editar y mover';
 
 var ZONA_HORARIA = 'America/Costa_Rica';
 
@@ -121,6 +124,8 @@ function ejecutarAccion_(p) {
       case 'getActividades':    return getActividades(p.salon, p.dia, p.token);
       case 'guardarAsistencia': return guardarAsistencia(p.id, p.valor, p.token, p.usuario);
       case 'guardarLote':       return guardarLote(p.items, p.token, p.usuario);
+      case 'editarExpositor':   return editarExpositor(p.id, p.personas, p.token, p.usuario);
+      case 'moverCharla':       return moverCharla(p.id, p.direccion, p.token, p.usuario);
       case 'getResumenAdmin':   return getResumenAdmin(p.token);
       case 'getBitacora':       return getBitacora(p.token, p.limite);
       case 'setBloqueo':        return setBloqueo(p.valor, p.token);
@@ -231,6 +236,156 @@ function getActividades(salon, dia, token) {
     dias: diasSalon,
     actividades: ordenarActividades_(acts, config.dias).map(function (a) { return actividadPublica_(a, hoy, config); })
   };
+}
+
+/**
+ * editarExpositor — cambia nombre(s), código(s) y correo(s) del expositor
+ * de una charla. personas = [{nombre, codigo, correo}, ...]
+ * Varias personas se guardan separadas por " / " (como en la hoja).
+ * Si no queda ningún nombre, la charla vuelve a "PENDIENTE".
+ * Queda en la Bitacora con el valor anterior y el nuevo.
+ */
+function editarExpositor(id, personas, token, usuario) {
+  var sesion = sesionDe_(token, usuario);
+  var limpias = validarPersonas_(personas);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(ESPERA_LOCK_MS)) throw errorPublico_('El sistema está ocupado. Intente de nuevo.', 'OCUPADO');
+  try {
+    var config = leerConfig_();
+    if (config.bloqueo && sesion.rol !== 'admin') {
+      throw errorPublico_('La edición está bloqueada por el administrador. Solo puede consultar.', 'BLOQUEADO');
+    }
+    var t = leerTabla_(HOJA_ACTIVIDADES, ['ID', 'Salon', 'Expositor', 'Codigo_medico', 'Correo', 'Estado']);
+    var i = indicePorId_(t, id);
+    var fila = t.filas[i];
+    var c = t.col;
+    var antes = resumenExpositor_(fila[c.Expositor], fila[c.Codigo_medico], fila[c.Correo]);
+    var nombres = limpias.map(function (p) { return p.nombre; }).join(' / ');
+    var codigos = limpias.some(function (p) { return p.codigo; }) ? limpias.map(function (p) { return p.codigo || '—'; }).join(' / ') : '';
+    var correos = limpias.some(function (p) { return p.correo; }) ? limpias.map(function (p) { return p.correo || '—'; }).join(' / ') : '';
+    var nuevo = {
+      Expositor: nombres || 'PENDIENTE',
+      Codigo_medico: codigos,
+      Correo: correos,
+      Estado: nombres ? 'CONFIRMADO' : 'PENDIENTE'
+    };
+    var numFila = i + 2;
+    Object.keys(nuevo).forEach(function (k) {
+      t.hoja.getRange(numFila, c[k] + 1).setValue(seguroHoja_(nuevo[k]));
+      fila[c[k]] = nuevo[k];
+    });
+    var despues = resumenExpositor_(nuevo.Expositor, nuevo.Codigo_medico, nuevo.Correo);
+    if (antes !== despues) {
+      agregarBitacora_([{ Fecha: new Date(), Usuario: sesion.usuario || 'Personal de apoyo', Salon: texto_(fila[c.Salon]),
+                          ID_actividad: texto_(fila[c.ID]).toUpperCase(), Valor_anterior: antes, Valor_nuevo: despues }]);
+    }
+    SpreadsheetApp.flush();
+    return { ok: true, actividad: actividadPublica_(filaAObjeto_(fila, t.encabezados), infoHoy_(config), config) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * moverCharla — sube (direccion = -1) o baja (+1) una charla dentro de su
+ * simposio. La charla intercambia su lugar con la vecina: se intercambian
+ * Hora y Orden, así los horarios del programa quedan iguales y lo que cambia
+ * es qué charla va en cada horario.
+ */
+function moverCharla(id, direccion, token, usuario) {
+  var sesion = sesionDe_(token, usuario);
+  var dir = Number(direccion) < 0 ? -1 : 1;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(ESPERA_LOCK_MS)) throw errorPublico_('El sistema está ocupado. Intente de nuevo.', 'OCUPADO');
+  try {
+    var config = leerConfig_();
+    if (config.bloqueo && sesion.rol !== 'admin') {
+      throw errorPublico_('La edición está bloqueada por el administrador. Solo puede consultar.', 'BLOQUEADO');
+    }
+    var t = leerTabla_(HOJA_ACTIVIDADES, ['ID', 'Dia', 'Salon', 'Hora', 'Simposio', 'Entidad']);
+    var c = t.col;
+    var iOrden = buscarColumna_(t.encabezados, 'Orden');
+    var i = indicePorId_(t, id);
+    var fila = t.filas[i];
+    // Charlas del mismo salón y día, en el mismo orden en que se muestran.
+    var mismas = [];
+    t.filas.forEach(function (f, k) {
+      if (texto_(f[c.ID]) && mismoTexto_(f[c.Salon], fila[c.Salon]) && mismoTexto_(f[c.Dia], fila[c.Dia])) {
+        var h = parsearHora_(f[c.Hora]);
+        mismas.push({ k: k, inicio: h.inicio === null ? 9999 : h.inicio, orden: iOrden >= 0 ? Number(f[iOrden]) || 0 : 0 });
+      }
+    });
+    mismas.sort(function (a, b) { return (a.inicio - b.inicio) || (a.orden - b.orden); });
+    var pos = mismas.map(function (m) { return m.k; }).indexOf(i);
+    var vecina = mismas[pos + dir];
+    var bloque = function (f) { return normalizar_(f[c.Simposio]) + '|' + normalizar_(f[c.Entidad]); };
+    if (!vecina || bloque(t.filas[vecina.k]) !== bloque(fila)) {
+      throw errorPublico_(dir < 0 ? 'Ya es la primera charla de su simposio.' : 'Ya es la última charla de su simposio.', 'MOVER');
+    }
+    var j = vecina.k;
+    var otra = t.filas[j];
+    var horaI = fila[c.Hora], horaJ = otra[c.Hora];
+    var ordI = iOrden >= 0 ? fila[iOrden] : '', ordJ = iOrden >= 0 ? otra[iOrden] : '';
+    t.hoja.getRange(i + 2, c.Hora + 1).setValue(horaJ);
+    t.hoja.getRange(j + 2, c.Hora + 1).setValue(horaI);
+    fila[c.Hora] = horaJ; otra[c.Hora] = horaI;
+    if (iOrden >= 0) {
+      t.hoja.getRange(i + 2, iOrden + 1).setValue(ordJ);
+      t.hoja.getRange(j + 2, iOrden + 1).setValue(ordI);
+      fila[iOrden] = ordJ; otra[iOrden] = ordI;
+    }
+    var quien = sesion.usuario || 'Personal de apoyo';
+    var ahora = new Date();
+    agregarBitacora_([
+      { Fecha: ahora, Usuario: quien, Salon: texto_(fila[c.Salon]), ID_actividad: texto_(fila[c.ID]).toUpperCase(),
+        Valor_anterior: 'Hora: ' + texto_(horaI), Valor_nuevo: 'Hora: ' + texto_(horaJ) },
+      { Fecha: ahora, Usuario: quien, Salon: texto_(otra[c.Salon]), ID_actividad: texto_(otra[c.ID]).toUpperCase(),
+        Valor_anterior: 'Hora: ' + texto_(horaJ), Valor_nuevo: 'Hora: ' + texto_(horaI) }
+    ]);
+    SpreadsheetApp.flush();
+    var hoy = infoHoy_(config);
+    return { ok: true, actividades: [fila, otra].map(function (f) { return actividadPublica_(filaAObjeto_(f, t.encabezados), hoy, config); }) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Revisa los datos de expositores que vienen del navegador. */
+function validarPersonas_(personas) {
+  if (!Array.isArray(personas)) throw errorPublico_('Datos de expositor inválidos.', 'DATOS');
+  if (personas.length > 8) throw errorPublico_('Máximo 8 expositores por charla.', 'DATOS');
+  var limpio = function (v, max) { return texto_(v).replace(/[\u0000-\u001f]/g, '').replace(/\s*\/\s*/g, ' ').replace(/\s+/g, ' ').slice(0, max); };
+  return personas.map(function (p) {
+    p = p || {};
+    return { nombre: limpio(p.nombre, 120), codigo: limpio(p.codigo, 30), correo: limpio(p.correo, 120).toLowerCase() };
+  }).filter(function (p) { return p.nombre || p.codigo || p.correo; }).map(function (p) {
+    if (!p.nombre) throw errorPublico_('Falta el nombre del expositor (código ' + (p.codigo || '—') + ').', 'DATOS');
+    if (p.correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.correo)) throw errorPublico_('El correo "' + p.correo + '" no es válido.', 'DATOS');
+    return p;
+  });
+}
+
+function resumenExpositor_(exp, cod, cor) {
+  return 'Expositor: ' + (texto_(exp) || '—') + ' · Cód: ' + (texto_(cod) || '—') + ' · Correo: ' + (texto_(cor) || '—');
+}
+
+/** Fila (índice en t.filas) de una actividad, buscando por ID. */
+function indicePorId_(t, id) {
+  var buscado = texto_(id).toUpperCase();
+  for (var i = 0; i < t.filas.length; i++) {
+    if (texto_(t.filas[i][t.col.ID]).toUpperCase() === buscado && buscado) return i;
+  }
+  throw errorPublico_('No existe la actividad ' + (buscado || '(sin ID)') + '.', 'NO_EXISTE');
+}
+
+function buscarColumna_(encabezados, nombre) {
+  for (var i = 0; i < encabezados.length; i++) if (mismoTexto_(encabezados[i], nombre)) return i;
+  return -1;
+}
+
+/** Evita que un texto que empieza con = + - @ se tome como fórmula. */
+function seguroHoja_(v) {
+  return /^[=+\-@]/.test(String(v)) ? "'" + v : v;
 }
 
 /**
@@ -914,7 +1069,8 @@ function separarExpositores_(expositor, codigo, correo) {
   var corOk = correos.length === nombres.length;
   return {
     personas: nombres.map(function (n, i) {
-      return { nombre: n, codigo: codOk ? codigos[i] : '', correo: corOk ? correos[i] : '' };
+      var vacio = function (x) { return /^[—–-]$/.test(x || '') ? '' : (x || ''); };
+      return { nombre: n, codigo: codOk ? vacio(codigos[i]) : '', correo: corOk ? vacio(correos[i]) : '' };
     }),
     codigosSueltos: codOk ? [] : codigos,
     correosSueltos: corOk ? [] : correos

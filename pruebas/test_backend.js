@@ -326,6 +326,68 @@ prueba('Token falso enviado sin PIN real se rechaza (no cae a "personal de apoyo
   assert.strictEqual(g.post({ accion: 'getResumenAdmin' }).ok, false, 'el panel admin sigue pidiendo PIN');
 });
 
+console.log('\n4c) Editar expositor y mover charlas');
+prueba('Editar expositor: cambia nombre, código y correo; PENDIENTE pasa a CONFIRMADO; queda en bitácora', () => {
+  const g = entornoConPines();
+  const r = g.post({ accion: 'editarExpositor', id: 'ACT-0005', usuario: 'Ana',
+    personas: [{ nombre: 'Dra. Laura Soto', codigo: '12345', correo: 'LSOTO@correo.cr ' }] });
+  assert.ok(r.ok, r.error);
+  const f = g.hojas.Actividades.find((x) => x[0] === 'ACT-0005');
+  assert.strictEqual(f[col(g, 'Actividades', 'Expositor')], 'Dra. Laura Soto');
+  assert.strictEqual(f[col(g, 'Actividades', 'Codigo_medico')], '12345');
+  assert.strictEqual(f[col(g, 'Actividades', 'Correo')], 'lsoto@correo.cr');
+  assert.strictEqual(f[col(g, 'Actividades', 'Estado')], 'CONFIRMADO');
+  assert.strictEqual(r.actividad.estado, 'CONFIRMADO');
+  assert.deepStrictEqual(plano(r.actividad.expositores.personas), [{ nombre: 'Dra. Laura Soto', codigo: '12345', correo: 'lsoto@correo.cr' }]);
+  const b = g.hojas.Bitacora[1];
+  assert.strictEqual(b[1], 'Ana'); assert.strictEqual(b[3], 'ACT-0005');
+  assert.match(String(b[4]), /Expositor: PENDIENTE/); assert.match(String(b[5]), /Laura Soto · Cód: 12345 · Correo: lsoto@correo.cr/);
+});
+prueba('Editar expositor: varios expositores con " / ", sin correo uno de ellos; vaciar todo deja PENDIENTE', () => {
+  const g = entornoConPines();
+  const r = g.post({ accion: 'editarExpositor', id: 'ACT-0068', personas: [
+    { nombre: 'Dra. Roxana Gaspar Taylor', codigo: '6751', correo: '' },
+    { nombre: 'Dr. Juan Carlos Villalta Fallas', codigo: '10130', correo: 'jvillalta@ccss.sa.cr' }] });
+  assert.ok(r.ok, r.error);
+  const f = g.hojas.Actividades.find((x) => x[0] === 'ACT-0068');
+  assert.strictEqual(f[col(g, 'Actividades', 'Correo')], '— / jvillalta@ccss.sa.cr');
+  assert.deepStrictEqual(plano(r.actividad.expositores.personas.map((p) => p.correo)), ['', 'jvillalta@ccss.sa.cr']);
+  const v = g.post({ accion: 'editarExpositor', id: 'ACT-0068', personas: [] });
+  assert.ok(v.ok);
+  assert.strictEqual(v.actividad.estado, 'PENDIENTE');
+  assert.strictEqual(f[col(g, 'Actividades', 'Expositor')], 'PENDIENTE');
+});
+prueba('Editar expositor: valida correo, exige nombre, evita fórmulas y respeta el bloqueo', () => {
+  const g = entornoConPines();
+  assert.strictEqual(g.post({ accion: 'editarExpositor', id: 'ACT-0001', personas: [{ nombre: 'X', correo: 'no-es-correo' }] }).ok, false);
+  assert.strictEqual(g.post({ accion: 'editarExpositor', id: 'ACT-0001', personas: [{ nombre: '', codigo: '123' }] }).ok, false);
+  assert.ok(g.post({ accion: 'editarExpositor', id: 'ACT-0001', personas: [{ nombre: '=HYPERLINK("x")' }] }).ok);
+  assert.ok(String(g.hojas.Actividades.find((x) => x[0] === 'ACT-0001')[col(g, 'Actividades', 'Expositor')]).startsWith("'="));
+  g.post({ accion: 'setBloqueo', valor: 'SI', token: tokenDe(g, '', PIN_ADMIN) });
+  const r = g.post({ accion: 'editarExpositor', id: 'ACT-0001', personas: [{ nombre: 'Y' }] });
+  assert.strictEqual(r.codigo, 'BLOQUEADO');
+  assert.strictEqual(g.post({ accion: 'moverCharla', id: 'ACT-0002', direccion: -1 }).codigo, 'BLOQUEADO');
+});
+prueba('Mover charla: intercambia hora y orden con la vecina del mismo simposio', () => {
+  const g = entornoConPines();
+  const H = col(g, 'Actividades', 'Hora'); const O = col(g, 'Actividades', 'Orden');
+  const f = (id) => g.hojas.Actividades.find((x) => x[0] === id);
+  const r = g.post({ accion: 'moverCharla', id: 'ACT-0166', direccion: 1, usuario: 'Ana' });
+  assert.ok(r.ok, r.error);
+  assert.strictEqual(f('ACT-0166')[H], '9:40 - 10:00 am'); assert.strictEqual(f('ACT-0167')[H], '9:20 - 9:40 am');
+  assert.strictEqual(f('ACT-0166')[O], 167); assert.strictEqual(f('ACT-0167')[O], 166);
+  const t = g.post({ accion: 'getTodo' });
+  const ids = t.actividades.filter((a) => a.salon === 'Roble 2' && a.dia === 'Martes').slice(0, 4).map((a) => a.id);
+  assert.deepStrictEqual(plano(ids), ['ACT-0165', 'ACT-0167', 'ACT-0166', 'ACT-0168']);
+  assert.strictEqual(g.hojas.Bitacora.length, 3);
+  // Subir la primera o bajar la última de un simposio no se permite (no salta a otro simposio).
+  assert.strictEqual(g.post({ accion: 'moverCharla', id: 'ACT-0165', direccion: -1 }).codigo, 'MOVER');
+  assert.strictEqual(g.post({ accion: 'moverCharla', id: 'ACT-0168', direccion: 1 }).codigo, 'MOVER');
+  // Volver a subirla la deja como estaba.
+  assert.ok(g.post({ accion: 'moverCharla', id: 'ACT-0166', direccion: -1 }).ok);
+  assert.strictEqual(f('ACT-0166')[H], '9:20 - 9:40 am');
+});
+
 console.log('\n5) Bloqueo y administración');
 prueba('Bloquear_edicion = SI: encargado no guarda, admin sí; solo admin cambia el bloqueo', () => {
   const g = entornoConPines();

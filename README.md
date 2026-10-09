@@ -139,7 +139,7 @@ Todo se cambia **en la hoja**; en la página basta tocar **↻** arriba a la der
 - **Mover o agregar columnas:** se puede. El sistema busca las columnas por el nombre del encabezado, así que **no cambie los nombres** de los encabezados.
 - **Corregir un número de asistencia:** mejor hágalo desde el panel de administrador (queda en la bitácora). Si lo cambia directo en la hoja también funciona, pero no queda registro en la bitácora y en la página aparecerá como "Editado en la hoja".
 
-El sistema **solo escribe** en `Asistentes`, `Registrado_por`, `Fecha_registro`, en la hoja `Bitacora` y en `Config → Bloquear_edicion`. Nunca modifica las demás columnas.
+El sistema escribe en `Asistentes`, `Registrado_por`, `Fecha_registro`, en la hoja `Bitacora` y en `Config → Bloquear_edicion`. Además, **solo cuando alguien lo pide desde la página**: `Expositor`, `Codigo_medico`, `Correo` y `Estado` (✎ Editar expositor) y `Hora` y `Orden` (▲ ▼ mover charla). Nunca modifica las demás columnas (ID, Día, Salón, Charla, Simposio, Entidad, Notas…).
 
 ## 7. Si cambia el código: publicar una nueva versión
 
@@ -167,6 +167,9 @@ Si cambia `index.html`, `styles.css` o `app.js` en GitHub, GitHub Pages se actua
 6. Si se cae la conexión, la fila se pone roja, **el número se conserva** y se reintenta con **Enter** o el botón **Guardar** de la fila.
 7. Si se equivocó, cambie el número y guarde de nuevo: se permite, y queda en la bitácora.
 8. **‹ Salones** (arriba a la izquierda) vuelve a la pantalla principal.
+9. **Cambiar el orden de las charlas:** los botones **▲ ▼** debajo de la hora suben o bajan la charla dentro de su simposio. La charla **intercambia su horario** con la vecina (los horarios del programa quedan iguales; cambia qué charla va en cada uno). El número de asistentes se mueve con la charla.
+10. **Editar expositor:** el botón **✎ Editar expositor** abre un formulario en la misma fila para cambiar el nombre, el código médico y el correo; con **+ Agregar otro expositor** se suman más personas y con **✕** se quitan. Al guardar, si la charla estaba **PENDIENTE** pasa a **CONFIRMADO**; si se deja todo vacío vuelve a **PENDIENTE**.
+    Los cambios de orden y de expositor se escriben en la hoja y quedan en la **Bitácora** con el valor anterior y el nuevo.
 
 **Administrador** (enlace **Administración** al pie de la pantalla principal; pide `PIN_admin`)
 - **Totales** por día, por salón y por simposio, más el total general. Respetan los filtros.
@@ -208,7 +211,7 @@ La carpeta `pruebas/` contiene un simulador de Apps Script en Node.js que ejecut
 ```bash
 pip install openpyxl
 python3 pruebas/xlsx_a_json.py BD_Asistencia_CMN2026.xlsx pruebas/datos_prueba.json
-node pruebas/test_backend.js                         # 31 pruebas de la lógica del servidor
+node pruebas/test_backend.js                         # 35 pruebas de la lógica del servidor
 NODE_PATH=$(npm root -g) node pruebas/test_ui.js     # requiere playwright instalado
 ```
 

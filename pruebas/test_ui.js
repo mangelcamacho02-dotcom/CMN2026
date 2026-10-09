@@ -172,6 +172,46 @@ const fila = (g, id) => g.hojas.Actividades.find((f) => f[0] === id);
     await page.screenshot({ path: path.join(CAPTURAS, '1_registro_roble2.png') });
   });
 
+  await paso('Mover charla: ▼ intercambia horario con la siguiente del simposio', async () => {
+    const orden = () => page.locator('#tabla .bloque >> nth=0').locator('.fila').evaluateAll((fs) => fs.map((f) => f.dataset.id));
+    assert.deepStrictEqual(await orden(), ['ACT-0165', 'ACT-0166', 'ACT-0167', 'ACT-0168']);
+    assert.ok(await page.locator('#c-ACT-0165 [data-mover="-1"]').isDisabled(), 'la primera no puede subir');
+    await page.click('#c-ACT-0166 [data-mover="1"]');
+    await page.waitForFunction(() => document.querySelector('#tabla .bloque .fila:nth-child(2)').dataset.id === 'ACT-0167');
+    assert.deepStrictEqual(await orden(), ['ACT-0165', 'ACT-0167', 'ACT-0166', 'ACT-0168']);
+    assert.strictEqual(await page.textContent('#c-ACT-0166 .c-hora b'), '9:40 - 10:00 am');
+    assert.strictEqual(fila(g, 'ACT-0166')[col(g, 'Hora')], '9:40 - 10:00 am');
+    assert.strictEqual(await page.inputValue('#c-ACT-0166 input'), '37', 'el número de asistentes viaja con la charla');
+    await page.click('#c-ACT-0166 [data-mover="-1"]');
+    await page.waitForFunction(() => document.querySelector('#tabla .bloque .fila:nth-child(2)').dataset.id === 'ACT-0166');
+  });
+
+  await paso('Editar expositor: nombre, código y correo; agregar un segundo expositor', async () => {
+    await page.goto(BASE + '#/s/Cedro%201/Lunes');
+    await page.waitForSelector('#c-ACT-0005');
+    await page.click('#c-ACT-0005 [data-editar]');
+    const ed = page.locator('#c-ACT-0005 .editor');
+    await ed.locator('[data-ed="nombre"]').fill('Dra. Laura Soto');
+    await ed.locator('[data-ed="codigo"]').fill('12345');
+    await ed.locator('[data-ed="correo"]').fill('correo-malo');
+    await ed.locator('[data-ed-guardar]').click();
+    assert.match(await ed.locator('.ed-error').textContent(), /no es válido/);
+    await ed.locator('[data-ed="correo"]').fill('lsoto@correo.cr');
+    await ed.locator('[data-ed-agregar]').click();
+    await ed.locator('.ed-persona >> nth=1').locator('[data-ed="nombre"]').fill('Dr. Pablo Ruiz');
+    await page.screenshot({ path: path.join(CAPTURAS, '5_editar_expositor.png') });
+    await ed.locator('[data-ed-guardar]').click();
+    await page.waitForFunction(() => !document.querySelector('#c-ACT-0005 .editor'));
+    const txt = await page.textContent('#c-ACT-0005 .c-charla');
+    assert.match(txt, /Dra\. Laura Soto\s*Cód\. 12345 · lsoto@correo\.cr/);
+    assert.match(txt, /Dr\. Pablo Ruiz\s*Cód\. — · —/);
+    assert.ok(!/PENDIENTE — expositor/.test(txt), 'ya no debe decir PENDIENTE');
+    assert.strictEqual(fila(g, 'ACT-0005')[col(g, 'Expositor')], 'Dra. Laura Soto / Dr. Pablo Ruiz');
+    assert.strictEqual(fila(g, 'ACT-0005')[col(g, 'Estado')], 'CONFIRMADO');
+    await page.goto(BASE + '#/s/Roble%202/Martes');
+    await page.waitForSelector('#c-ACT-0165');
+  });
+
   await paso('Administración pide PIN de admin: totales, corrección, bitácora, CSV', async () => {
     await page.click('#btnVolver');
     await page.click('#btnAdmin');
