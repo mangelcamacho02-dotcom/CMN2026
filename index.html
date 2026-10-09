@@ -13,65 +13,67 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- Barra superior -->
-  <header class="app-bar">
-    <div class="marca">
-      <!-- Logo opcional: suba "logos.png" al repositorio y aparecerá aquí. -->
-      <img class="logos" src="logos.png" alt="CMC · Congreso Médico Nacional" onerror="this.remove()">
-      <div class="marca-txt"><small id="evento">Congreso Médico Nacional 2026</small><b>Registro de asistencia<span class="pt">.</span></b></div>
+  <header class="top" id="top">
+    <div class="top-in">
+      <div class="top-nav">
+        <button id="btnVolver" class="nav-btn" type="button" hidden>‹ Salones</button>
+        <!-- Logo opcional: suba un archivo "logos.png" al repositorio y aparecerá aquí. -->
+        <img class="logos" src="logos.png" alt="Colegio de Médicos y Cirujanos · Congreso Médico Nacional" onerror="this.remove()">
+        <span class="sp"></span>
+        <label class="quien" title="Su nombre queda registrado junto a cada número que guarde">
+          <span>Registra</span>
+          <input id="inpNombre" type="text" maxlength="40" placeholder="Escriba su nombre" autocomplete="name">
+        </label>
+        <button id="btnRecargar" type="button" class="nav-btn" title="Volver a traer los datos de la hoja">↻ <span id="actualizado"></span></button>
+      </div>
+      <div class="kicker" id="kicker">Congreso Médico Nacional 2026</div>
+      <h1><span id="tituloEvento">Asistencia</span><span class="pt">.</span></h1>
+      <p class="lead" id="subtitulo"></p>
+      <div class="chips" id="chips"></div>
     </div>
-    <nav class="dias" id="dias" role="tablist" aria-label="Día del congreso"></nav>
-    <div class="acciones">
-      <label class="quien" title="Su nombre queda registrado junto a cada número que guarde">
-        <span>Registra</span>
-        <input id="inpNombre" type="text" maxlength="40" placeholder="Su nombre" autocomplete="name">
-      </label>
-      <button id="btnRecargar" type="button" class="btn-icono" title="Volver a traer los datos de la hoja">↻ <span id="actualizado">—</span></button>
-      <button id="btnAdmin" type="button" class="btn-link">Administración</button>
-      <button id="btnVolver" type="button" class="btn-link" hidden>← Volver al registro</button>
-    </div>
+    <svg class="wave" viewBox="0 0 1440 46" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 30 C 420 60, 900 0, 1440 14 L1440 46 L0 46 Z" fill="#eef3f8"/>
+      <path d="M0 30 C 420 60, 900 0, 1440 14" fill="none" stroke="#f07a22" stroke-width="5"/>
+    </svg>
   </header>
 
   <div id="avisoRed" class="aviso aviso-rojo" hidden role="status">Sin conexión a internet. Lo que escriba se conserva; guárdelo cuando vuelva la señal.</div>
   <div id="avisoConfig" class="aviso aviso-rojo" hidden>Falta configurar la URL del Apps Script en <b>app.js</b> (constante <code>API_URL</code>).</div>
-  <div id="avisoBloqueo" class="aviso aviso-naranja" hidden>La edición está bloqueada por el administrador: solo se puede consultar.</div>
 
-  <!-- Registro: lista de salones + tabla de charlas -->
-  <div id="vRegistro" class="layout vista" hidden>
-    <aside class="lateral" aria-label="Salones">
-      <div class="lat-cab">
-        <input type="search" id="buscar" placeholder="Buscar salón, charla o expositor…" aria-label="Buscar">
+  <main id="app">
+    <div id="avisoBloqueo" class="aviso aviso-naranja" hidden>La edición está bloqueada por el administrador: solo se puede consultar.</div>
+    <p id="errorGeneral" class="msg-error" hidden role="alert"></p>
+
+    <!-- Pantalla principal: salones -->
+    <section id="vInicio" class="vista" hidden>
+      <div class="step"><div class="step-n">1</div><div><h2>Elija el salón</h2><small>Luego anote los asistentes de cada charla</small></div></div>
+      <div class="carrusel" role="region" aria-roledescription="carrusel" aria-label="Salones">
+        <div id="gridSalones" class="car-pista" tabindex="-1"></div>
       </div>
-      <nav id="listaSalones" class="lista-salones"></nav>
-      <div class="lat-pie" id="totalDia"></div>
-    </aside>
-
-    <main class="contenido" id="contenido">
-      <div class="cont-cab">
-        <div class="cont-titulo">
-          <small id="cabDia">—</small>
-          <h1 id="cabSalon">—</h1>
-        </div>
-        <div class="kpis-mini">
-          <div><b id="resTotal">0</b><span>asistentes</span></div>
-          <div><b id="resCharlas">0 / 0</b><span>registradas</span><div class="bar"><i id="resBarra" style="width:0%"></i></div></div>
-          <div title="Charlas que ya terminaron y no tienen asistencia registrada"><b id="resPend">0</b><span>atrasadas</span></div>
-        </div>
+      <div class="car-nav" id="carNav" hidden>
+        <button type="button" class="car-flecha" id="carPrev" aria-label="Salones anteriores">‹</button>
+        <div class="car-puntos" id="carPuntos"></div>
+        <button type="button" class="car-flecha" id="carNext" aria-label="Salones siguientes">›</button>
       </div>
-      <p id="errorRegistro" class="msg-error" hidden role="alert"></p>
-      <div id="tabla" class="tabla-registro" aria-live="off"></div>
-      <div id="cargando" class="cargando" hidden><span class="spinner"></span> Cargando datos de la hoja…</div>
+      <div class="pie-inicio">
+        <button id="btnAdmin" type="button" class="btn-discreto">Administración</button>
+      </div>
+    </section>
 
-      <footer class="barra-acciones" id="barraAcciones">
-        <span class="atajos"><kbd>Enter</kbd> guarda y pasa a la siguiente · <kbd>↑</kbd><kbd>↓</kbd> moverse · <kbd>Ctrl</kbd>+<kbd>S</kbd> guardar todo</span>
-        <span class="sum" id="dockSum"></span>
-        <button id="btnGuardarTodo" type="button" class="btn go">Guardar todo</button>
-      </footer>
-    </main>
-  </div>
+    <!-- Pantalla del salón: días y charlas -->
+    <section id="vSalon" class="vista" hidden>
+      <div class="days-wrap"><nav id="tabsDias" class="tabs-dias" role="tablist" aria-label="Días"></nav></div>
+      <div class="resumen-dia panel">
+        <div class="res-kpi"><span class="res-num" id="resTotal">0</span><span class="res-lbl">asistentes del día</span></div>
+        <div class="res-kpi"><span class="res-num" id="resCharlas">0 / 0</span><span class="res-lbl">charlas registradas</span>
+          <div class="bar" aria-hidden="true"><i id="resBarra" style="width:0%"></i></div></div>
+        <div class="res-kpi" title="Charlas que ya terminaron y no tienen asistencia registrada"><span class="res-num atr" id="resPend">0</span><span class="res-lbl">atrasadas</span></div>
+      </div>
+      <div id="tabla" class="tabla-registro"></div>
+    </section>
 
-  <!-- PIN de administrador -->
-  <main class="solo" id="mainSolo">
+    <div id="cargando" class="cargando" hidden><span class="spinner"></span> Cargando datos de la hoja…</div>
+
     <section id="vPin" class="vista" hidden>
       <form id="formPin" class="caja-pin panel" autocomplete="off">
         <div class="candado" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
@@ -85,7 +87,6 @@
 
     <!-- Pantalla 5: administrador -->
     <section id="vAdmin" class="vista vista-admin" hidden>
-      <div class="admin-titulo"><h1>Administración</h1><p>Totales, charlas sin registrar, correcciones y bitácora.</p></div>
       <div class="admin-acciones">
         <button id="admRecargar" type="button" class="btn btn-secundario">↻ Recargar</button>
         <button id="admBloqueo" type="button" class="btn btn-secundario">Bloquear edición</button>
@@ -125,6 +126,15 @@
     </section>
 
   </main>
+
+  <!-- Barra inferior del salón -->
+  <div id="barraGuardarTodo" class="dock" hidden>
+    <div class="dock-in">
+      <span class="atajos"><kbd>Enter</kbd> guarda y pasa a la siguiente · <kbd>↑</kbd><kbd>↓</kbd> moverse · <kbd>Ctrl</kbd>+<kbd>S</kbd> guardar todo</span>
+      <div class="sum" id="dockSum"><b>Todo guardado</b></div>
+      <button id="btnGuardarTodo" type="button" class="btn go">Guardar todo</button>
+    </div>
+  </div>
 
   <div id="toast" class="toast" hidden role="status"></div>
 

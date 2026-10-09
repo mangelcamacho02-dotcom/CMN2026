@@ -3,8 +3,8 @@
      En Apps Script se pega únicamente Code.gs.
    =========================================================================
    CMN 2026 — Registro de asistencia por charla (frontend)
-   Pensado para computadora: lista de salones a la izquierda y tabla de
-   charlas a la derecha. Lo usa el personal de apoyo (sin PIN).
+   Pantalla principal con los salones (carrusel) → pantalla de cada salón
+   con sus días y charlas en filas. Lo usa el personal de apoyo (sin PIN).
    El panel de administración sí pide el PIN de administrador.
    HTML + CSS + JavaScript puro. Todos los datos vienen de la hoja de Google
    a través del Apps Script publicado como aplicación web.
@@ -29,7 +29,6 @@ const estado = {
   firma: '',               // para saber si algo cambió al refrescar
   dia: null,               // día seleccionado
   salon: null,             // salón seleccionado
-  buscar: '',
   borradores: new Map(),   // id → texto escrito y no guardado
   errores: new Map(),      // id → mensaje de error del último intento
   guardando: new Set(),    // ids que se están guardando
@@ -171,32 +170,38 @@ async function apiOk(accion, datos) {
 }
 
 // ---------------------------------------------------------------------------
-//  Navegación (#/s/Real%201/Martes  ·  #/admin)
+//  Navegación (#/  ·  #/s/Real%201/Martes  ·  #/admin)
 // ---------------------------------------------------------------------------
 function ir(hash) {
   if (location.hash === hash) ruta(); else location.hash = hash;
 }
-function hashRegistro() {
-  return '#/s/' + encodeURIComponent(estado.salon || '') + '/' + encodeURIComponent(estado.dia || '');
+function hashSalon(salon, dia) {
+  return '#/s/' + encodeURIComponent(salon || '') + (dia ? '/' + encodeURIComponent(dia) : '');
 }
-function fijarHash() { history.replaceState(null, '', hashRegistro()); }
+function fijarHash() { history.replaceState(null, '', hashSalon(estado.salon, estado.dia)); }
 
 function ruta() {
   const partes = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   if (partes[0] === 'admin') return mostrarAdmin();
-  if ((partes[0] === 's' || partes[0] === 'salon') && partes[1]) return mostrarRegistro(partes[1], partes[2]);
-  return mostrarRegistro();
+  if ((partes[0] === 's' || partes[0] === 'salon') && partes[1]) return mostrarSalon(partes[1], partes[2]);
+  return mostrarInicio();
 }
 
-function mostrarVista(id) {
+/** Muestra una pantalla y ajusta el encabezado (grande en la principal, compacto en las demás). */
+function mostrarVista(id, titulo, subtitulo) {
   estado.vista = id;
-  ['vRegistro', 'vPin', 'vAdmin'].forEach((v) => { $(v).hidden = v !== id; });
-  $('mainSolo').hidden = id === 'vRegistro';
-  $('dias').hidden = id !== 'vRegistro';
-  $('btnAdmin').hidden = id !== 'vRegistro';
-  $('btnVolver').hidden = id === 'vRegistro';
-  document.body.classList.toggle('modo-admin', id !== 'vRegistro');
-  document.title = (id === 'vRegistro' ? 'Asistencia' : 'Administración') + ' · CMN 2026';
+  ['vInicio', 'vSalon', 'vPin', 'vAdmin'].forEach((v) => { $(v).hidden = v !== id; });
+  $('top').classList.toggle('compacto', id !== 'vInicio');
+  $('top').classList.toggle('ancho', id === 'vAdmin' || id === 'vSalon');
+  $('app').classList.toggle('ancho', id === 'vAdmin' || id === 'vSalon');
+  $('kicker').textContent = (estado.datos && estado.datos.evento) || 'Congreso Médico Nacional 2026';
+  $('tituloEvento').textContent = titulo || 'Asistencia';
+  $('subtitulo').innerHTML = subtitulo || '';
+  if (id !== 'vInicio') $('chips').innerHTML = '';
+  $('btnVolver').hidden = id === 'vInicio';
+  $('barraGuardarTodo').hidden = id !== 'vSalon';
+  mostrarError('errorGeneral', '');
+  document.title = (titulo ? titulo + ' · ' : '') + 'Asistencia CMN 2026';
 }
 function cargando(si) { $('cargando').hidden = !si; }
 function mostrarError(id, msg) { const el = $(id); el.textContent = msg || ''; el.hidden = !msg; }
@@ -208,63 +213,43 @@ function escribiendo() {
 }
 
 // ---------------------------------------------------------------------------
-//  Registro: datos
+//  Datos (una sola petición trae todas las charlas)
 // ---------------------------------------------------------------------------
-async function mostrarRegistro(salon, dia) {
-  mostrarVista('vRegistro');
-  if (salon) estado.salon = salon;
-  if (dia) estado.dia = dia;
-  if (estado.datos) { elegirSalonYDia(); renderTodo(); } else cargando(true);
-  await cargarDatos(false);
-}
-
 async function cargarDatos(silencioso) {
   try {
     const r = await apiOk('getTodo');
     estado.datos = r;
     estado.ultimaCarga = Date.now();
     $('actualizado').textContent = horaActual();
-    $('evento').textContent = r.evento;
-    mostrarError('errorRegistro', '');
+    $('kicker').textContent = r.evento;
     const firma = JSON.stringify([r.actividades, r.bloqueo, r.dias, r.salones]);
     const cambio = firma !== estado.firma;
     estado.firma = firma;
-    if (estado.vista !== 'vRegistro') return;
-    elegirSalonYDia();
-    if (silencioso && !cambio) { renderLateral(); renderDias(); return; }  // solo refresca "ya terminó"
+    renderAvisos();
+    if (estado.vista === 'vInicio') { renderInicio(); return; }
+    if (estado.vista !== 'vSalon') return;
+    elegirDiaDelSalon();
+    if (silencioso && !cambio) { renderDias(); parchearTabla(); return; }  // refresca "en curso" / "ya terminó"
     if (silencioso) {
-      renderDias(); renderLateral(); renderAvisos();
+      renderDias();
       if (!parchearTabla()) {
         if (escribiendo()) estado.renderPendiente = true; else renderTabla();
       }
       actualizarResumen();
       return;
     }
-    renderTodo();
+    renderSalon();
   } catch (e) {
     if (silencioso) $('actualizado').textContent = 'sin conexión';
-    else mostrarError('errorRegistro', e.message);
+    else mostrarError('errorGeneral', e.message);
   } finally {
     cargando(false);
   }
 }
 
-/** Valida el salón y día elegidos; si no sirven, elige unos razonables. */
-function elegirSalonYDia() {
-  const r = estado.datos;
-  const diasConCharlas = r.dias.filter((d) => r.actividades.some((a) => norm(a.dia) === norm(d)));
-  const dia = diasConCharlas.find((d) => norm(d) === norm(estado.dia)) ||
-    diasConCharlas.find((d) => norm(d) === norm(r.hoy)) || diasConCharlas[0] || r.dias[0] || null;
-  estado.dia = dia;
-  const nombres = r.salones.map((s) => s.salon);
-  const buscarSalon = (n) => nombres.find((x) => norm(x) === norm(n));
-  estado.salon = buscarSalon(estado.salon) || buscarSalon(leerLocal(CLAVE_ULTIMO)) ||
-    nombres.find((n) => actsDe(n, dia).length) || nombres[0] || null;
-}
-
 function actsDe(salon, dia) {
   if (!estado.datos) return [];
-  return estado.datos.actividades.filter((a) => norm(a.salon) === norm(salon) && norm(a.dia) === norm(dia));
+  return estado.datos.actividades.filter((a) => norm(a.salon) === norm(salon) && (dia == null || norm(a.dia) === norm(dia)));
 }
 function actividad(id) { return estado.datos && estado.datos.actividades.find((a) => a.id === id); }
 function puedeGuardar() { return !!estado.datos && !estado.datos.bloqueo; }
@@ -283,63 +268,159 @@ function enCurso(a) {
   return a.inicio <= m && m < (a.fin != null ? a.fin : a.inicio + 20);
 }
 
-// ---------------------------------------------------------------------------
-//  Registro: dibujo
-// ---------------------------------------------------------------------------
-function renderTodo() {
-  renderDias();
-  renderLateral();
-  renderAvisos();
-  renderTabla();
-}
-
 function renderAvisos() {
   $('avisoBloqueo').hidden = !(estado.datos && estado.datos.bloqueo);
 }
 
-/** Días: botones arriba, con registradas / total de todo el congreso ese día. */
-function renderDias() {
-  const r = estado.datos;
-  $('dias').innerHTML = r.dias.map((d) => {
-    const acts = r.actividades.filter((a) => norm(a.dia) === norm(d));
-    const reg = acts.filter((a) => a.asistentes != null).length;
-    const sel = norm(d) === norm(estado.dia);
-    const hoy = norm(d) === norm(r.hoy);
-    return `<button type="button" class="dia" role="tab" data-dia="${esc(d)}" aria-selected="${sel}" ${acts.length ? '' : 'disabled'}
-      title="${esc(d)}: ${reg} de ${acts.length} charlas registradas">
-      <b>${esc(d)}</b><small>${hoy ? '<span class="hoy">Hoy · </span>' : ''}${reg}/${acts.length}</small></button>`;
-  }).join('');
+// ---------------------------------------------------------------------------
+//  Pantalla principal: salones en carrusel
+// ---------------------------------------------------------------------------
+async function mostrarInicio() {
+  mostrarVista('vInicio', null, 'Registro de asistentes por charla. Elija el salón y anote cuántas personas hubo en cada charla.');
+  if (estado.datos) renderInicio(); else cargando(true);
+  await cargarDatos(false);
 }
 
-/** Lista de salones (columna izquierda) con su avance del día elegido. */
-function renderLateral() {
+function renderInicio() {
   const r = estado.datos;
-  const q = norm(estado.buscar);
-  let tot = 0; let reg = 0; let asis = 0; let pend = 0;
-  const html = r.salones.map((s) => {
-    const acts = actsDe(s.salon, estado.dia);
-    const n = acts.filter((a) => a.asistentes != null);
+  if (!r) return;
+  const total = r.actividades.length;
+  const reg = r.actividades.filter((a) => a.asistentes != null).length;
+  $('chips').innerHTML = [`<b>${r.salones.length}</b> salones`, `<b>${total}</b> charlas`, `<b>${reg}</b> registradas`,
+    r.hoy ? `Hoy: <b>${esc(r.hoy)}</b>` : `<b>${r.dias.length}</b> días`]
+    .map((x) => `<span class="chip">${x}</span>`).join('');
+  const pista = $('gridSalones');
+  const posicion = pista.scrollLeft; // al refrescar no se pierde el lugar del carrusel
+  pista.innerHTML = r.salones.length ? r.salones.map((s, i) => {
+    const acts = actsDe(s.salon);
+    const n = acts.filter((a) => a.asistentes != null).length;
     const atr = acts.filter(yaTermino).length;
-    const borr = acts.filter((a) => estado.borradores.has(a.id)).length;
-    tot += acts.length; reg += n.length; pend += atr; asis += n.reduce((x, a) => x + a.asistentes, 0);
-    const coincide = !q || norm(s.salon).includes(q) || acts.some((a) =>
-      norm([a.charla, a.expositor, a.simposio, a.entidad, a.id].join(' ')).includes(q));
-    if (!coincide) return '';
-    const pct = acts.length ? Math.round((n.length / acts.length) * 100) : 0;
-    const sel = norm(s.salon) === norm(estado.salon);
-    return `<button type="button" class="salon${sel ? ' sel' : ''}${acts.length ? '' : ' sin-charlas'}${acts.length && pct === 100 ? ' completo' : ''}"
-        data-salon="${esc(s.salon)}" aria-current="${sel}">
-      <span class="s-nombre">${esc(s.salon)}</span>
-      <span class="s-cuenta">${acts.length ? `${n.length}/${acts.length}` : 'Sin charlas'}</span>
-      ${acts.length ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ''}
-      <span class="s-marcas">${atr ? `<span class="m-atr" title="Ya terminaron y no tienen asistencia registrada">${atr} atrasada${atr === 1 ? '' : 's'}</span>` : ''}${borr ? `<span class="m-borr" title="Cambios sin guardar">${borr} sin guardar</span>` : ''}</span>
-    </button>`;
+    const hoyActs = r.hoy ? actsDe(s.salon, r.hoy) : [];
+    const pct = acts.length ? Math.round((n / acts.length) * 100) : 0;
+    const dias = r.dias.map((d) => {
+      const tiene = acts.some((a) => norm(a.dia) === norm(d));
+      const cls = !tiene ? 'no' : (norm(d) === norm(r.hoy) ? 'hoy' : '');
+      return `<span class="${cls}" title="${esc(d)}${tiene ? '' : ': sin charlas'}">${esc(String(d).slice(0, 3))}</span>`;
+    }).join('');
+    return `<button type="button" class="tarjeta-salon${acts.length && pct === 100 ? ' completo' : ''}" data-salon="${esc(s.salon)}"
+        aria-roledescription="diapositiva" aria-label="${esc(s.salon)}, ${i + 1} de ${r.salones.length}">
+        <span class="ph"><small>Salón</small><span class="nombre">${esc(s.salon)}</span><span class="pct">${pct}%</span></span>
+        <span class="bd">
+          <span class="avance">${n} / ${acts.length} charlas registradas</span>
+          <span class="bar" aria-hidden="true"><i style="width:${pct}%"></i></span>
+          <span class="dias-mini" aria-hidden="true">${dias}</span>
+          ${atr ? `<span class="m-atr">${atr} atrasada${atr === 1 ? '' : 's'}</span>` : ''}
+          <span class="entrar">${hoyActs.length ? `Hoy: ${hoyActs.length} charla${hoyActs.length === 1 ? '' : 's'} · ` : ''}Entrar →</span>
+        </span>
+      </button>`;
+  }).join('') : '<p class="vacio">No hay salones activos en la hoja "Salones".</p>';
+  $('carNav').hidden = r.salones.length < 2;
+  $('carPuntos').innerHTML = r.salones.map((s, i) =>
+    `<button type="button" class="car-punto" data-i="${i}" aria-label="Ir a ${esc(s.salon)}"></button>`).join('');
+  if (!carrusel.iniciado) {
+    // Primera vez: mostrar el último salón usado.
+    carrusel.iniciado = true;
+    const ult = leerLocal(CLAVE_ULTIMO);
+    const i = r.salones.findIndex((s) => norm(s.salon) === norm(ult));
+    if (i > 0) requestAnimationFrame(() => carrusel.ir(i, false));
+  } else {
+    pista.style.scrollBehavior = 'auto';
+    pista.scrollLeft = posicion;
+    pista.style.scrollBehavior = '';
+  }
+  carrusel.actualizar();
+}
+
+const carrusel = {
+  iniciado: false,
+  tarjetas() { return [...$('gridSalones').querySelectorAll('.tarjeta-salon')]; },
+  /** Índice de la primera tarjeta visible. */
+  actual() {
+    const pista = $('gridSalones');
+    const ts = this.tarjetas();
+    if (!ts.length) return 0;
+    const base = ts[0].offsetLeft;
+    let mejor = 0;
+    ts.forEach((t, i) => {
+      if (Math.abs(t.offsetLeft - base - pista.scrollLeft) < Math.abs(ts[mejor].offsetLeft - base - pista.scrollLeft)) mejor = i;
+    });
+    return mejor;
+  },
+  /** Cuántas tarjetas caben completas en pantalla. */
+  visibles() {
+    const ts = this.tarjetas();
+    if (ts.length < 2) return 1;
+    const paso = ts[1].offsetLeft - ts[0].offsetLeft;
+    return Math.max(1, Math.floor(($('gridSalones').clientWidth - 16) / paso));
+  },
+  ir(i, suave) {
+    const ts = this.tarjetas();
+    if (!ts.length) return;
+    i = Math.max(0, Math.min(i, ts.length - 1));
+    $('gridSalones').scrollTo({ left: ts[i].offsetLeft - ts[0].offsetLeft, behavior: suave === false ? 'auto' : 'smooth' });
+  },
+  mover(dir) { this.ir(this.actual() + dir * this.visibles()); },
+  actualizar() {
+    const pista = $('gridSalones');
+    const ts = this.tarjetas();
+    const i = this.actual();
+    const v = this.visibles();
+    document.querySelectorAll('#carPuntos .car-punto').forEach((p, k) => p.setAttribute('aria-current', String(k >= i && k < i + v)));
+    $('carPrev').disabled = pista.scrollLeft < 4;
+    $('carNext').disabled = pista.scrollLeft + pista.clientWidth >= pista.scrollWidth - 4 || ts.length < 2;
+  }
+};
+
+// ---------------------------------------------------------------------------
+//  Pantalla del salón: días y charlas
+// ---------------------------------------------------------------------------
+async function mostrarSalon(salon, dia) {
+  if (norm(salon) !== norm(estado.salon)) estado.dia = null;
+  estado.salon = salon;
+  if (dia) estado.dia = dia;
+  guardarLocal(CLAVE_ULTIMO, salon);
+  mostrarVista('vSalon', salon, '');
+  if (estado.datos) { elegirDiaDelSalon(); renderSalon(); enfocarPrimeraVacia(); } else { $('tabla').innerHTML = ''; cargando(true); }
+  const primeraVez = !estado.datos;
+  await cargarDatos(false);
+  if (primeraVez) enfocarPrimeraVacia();
+}
+
+/** Día del salón: el elegido, si no hoy, si no el primero con charlas. */
+function elegirDiaDelSalon() {
+  const r = estado.datos;
+  const real = r.salones.find((s) => norm(s.salon) === norm(estado.salon));
+  if (real) estado.salon = real.salon;
+  const conCharlas = r.dias.filter((d) => actsDe(estado.salon, d).length);
+  estado.dia = conCharlas.find((d) => norm(d) === norm(estado.dia)) ||
+    conCharlas.find((d) => norm(d) === norm(r.hoy)) || conCharlas[0] || r.dias[0] || null;
+}
+
+function renderSalon() {
+  const r = estado.datos;
+  const existe = r.salones.some((s) => norm(s.salon) === norm(estado.salon));
+  $('tituloEvento').textContent = estado.salon;
+  $('subtitulo').innerHTML = existe
+    ? `${esc(estado.dia || '')}${norm(estado.dia) === norm(r.hoy) ? ' <b class="hoy">· hoy</b>' : ''} — escriba el número y presione <b>Enter</b> para guardar.`
+    : 'Este salón no existe o está desactivado en la hoja "Salones".';
+  renderDias();
+  renderTabla();
+}
+
+/** Pestañas de días del salón: registradas/total y burbuja de cambios sin guardar. */
+function renderDias() {
+  const r = estado.datos;
+  $('tabsDias').innerHTML = r.dias.map((d) => {
+    const acts = actsDe(estado.salon, d);
+    const reg = acts.filter((a) => a.asistentes != null).length;
+    const pend = acts.filter((a) => estado.borradores.has(a.id)).length;
+    const sel = norm(d) === norm(estado.dia);
+    const hoy = norm(d) === norm(r.hoy);
+    return `<button type="button" class="tab-dia" role="tab" data-dia="${esc(d)}" aria-selected="${sel}" ${acts.length ? '' : 'disabled'}
+      title="${esc(d)}${acts.length ? `: ${reg} de ${acts.length} charlas registradas` : ' (sin charlas)'}">
+      ${pend ? `<span class="bdg" title="Cambios sin guardar">${pend}</span>` : ''}
+      <b>${esc(d)}</b><small>${hoy ? '<span class="hoy">Hoy · </span>' : ''}${acts.length ? `${reg} de ${acts.length}` : 'sin charlas'}</small></button>`;
   }).join('');
-  $('listaSalones').innerHTML = html || '<p class="vacio">Ningún salón coincide con la búsqueda.</p>';
-  $('totalDia').innerHTML = `<b>${esc(estado.dia || '')} · todos los salones</b>
-    <span><b>${asis.toLocaleString('es-CR')}</b> asistentes</span>
-    <span><b>${reg}/${tot}</b> charlas registradas</span>
-    ${pend ? `<span class="t-atr"><b>${pend}</b> ya terminaron sin registrar</span>` : ''}`;
 }
 
 /** Agrupa charlas consecutivas del mismo Simposio + Entidad. */
@@ -370,8 +451,6 @@ function renderTabla() {
   if (!r) return;
   const acts = actsDe(estado.salon, estado.dia);
   estado.firmaTabla = firmaTabla(acts);
-  $('cabSalon').textContent = estado.salon || '—';
-  $('cabDia').innerHTML = esc(estado.dia || '') + (norm(estado.dia) === norm(r.hoy) ? ' <span class="hoy">· hoy</span>' : '');
   const foco = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.id : null;
   if (!acts.length) {
     $('tabla').innerHTML = `<p class="vacio">${esc(estado.salon || '')} no tiene charlas el ${esc((estado.dia || '').toLowerCase())}.</p>`;
@@ -499,11 +578,10 @@ function reemplazarActividad(nueva) {
   if (i >= 0) lista[i] = nueva;
 }
 
-/** Después de guardar: refresca fila, totales, lista de salones y días. */
+/** Después de guardar: refresca fila, totales, días y cuentas de cada simposio. */
 function trasGuardar(ids) {
   ids.forEach(actualizarFila);
   actualizarResumen();
-  renderLateral();
   renderDias();
   document.querySelectorAll('#tabla .bloque').forEach((b) => {
     const filas = [...b.querySelectorAll('.fila')].map((f) => actividad(f.dataset.id)).filter(Boolean);
@@ -525,7 +603,7 @@ function alEscribir(inp) {
   estado.errores.delete(id);
   actualizarFila(id);
   actualizarResumen();
-  if (antes !== estado.borradores.size) renderLateral();
+  if (antes !== estado.borradores.size) renderDias();
 }
 
 /** Deshace lo escrito en una fila (Esc). */
@@ -625,24 +703,11 @@ function enfocarPrimeraVacia() {
   if (vacio) vacio.focus({ preventScroll: true });
 }
 
-function elegirSalon(nombre) {
-  estado.salon = nombre;
-  guardarLocal(CLAVE_ULTIMO, nombre);
-  fijarHash();
-  renderLateral();
-  renderTabla();
-  $('contenido').scrollTop = 0;
-  window.scrollTo(0, 0);
-  enfocarPrimeraVacia();
-}
-
 function elegirDia(dia) {
   estado.dia = dia;
   fijarHash();
-  renderDias();
-  renderLateral();
-  renderTabla();
-  $('contenido').scrollTop = 0;
+  renderSalon();
+  window.scrollTo(0, 0);
   enfocarPrimeraVacia();
 }
 
@@ -650,7 +715,7 @@ function elegirDia(dia) {
 //  PIN de administrador
 // ---------------------------------------------------------------------------
 function mostrarPin() {
-  mostrarVista('vPin');
+  mostrarVista('vPin', 'Administración', 'Escriba el PIN de administrador.');
   $('inpPin').value = '';
   mostrarError('errorPin', '');
   setTimeout(() => $('inpPin').focus(), 50);
@@ -684,7 +749,7 @@ const adm = { borradores: new Map(), errores: new Map(), guardando: new Set() };
 async function mostrarAdmin() {
   const ses = Sesion.admin();
   if (!ses) return mostrarPin();
-  mostrarVista('vAdmin');
+  mostrarVista('vAdmin', 'Administración', 'Totales, charlas atrasadas, correcciones y bitácora.');
   mostrarError('errorAdmin', '');
   if (estado.admin) renderAdmin();
   else $('admTotales').innerHTML = '<div class="cargando"><span class="spinner"></span> Cargando…</div>';
@@ -989,7 +1054,7 @@ function iniciar() {
   $('btnAdmin').addEventListener('click', () => ir('#/admin'));
   $('btnVolver').addEventListener('click', () => {
     if (adm.borradores.size && !confirm('Hay correcciones sin guardar en Administración. ¿Salir de todos modos?')) return;
-    ir(hashRegistro());
+    ir('#/');
   });
   $('btnRecargar').addEventListener('click', () => {
     if (estado.vista === 'vAdmin') { estado.bitacora = null; cargarAdmin(false); return; }
@@ -998,26 +1063,37 @@ function iniciar() {
   });
   $('formPin').addEventListener('submit', enviarPin);
 
-  // Días
-  $('dias').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-dia]');
-    if (b && !b.disabled) elegirDia(b.dataset.dia);
+  // Pantalla principal: carrusel de salones
+  $('gridSalones').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-salon]');
+    if (b) ir(hashSalon(b.dataset.salon));
+  });
+  let rafCarrusel = 0;
+  $('gridSalones').addEventListener('scroll', () => {
+    cancelAnimationFrame(rafCarrusel);
+    rafCarrusel = requestAnimationFrame(() => carrusel.actualizar());
+  }, { passive: true });
+  window.addEventListener('resize', () => carrusel.actualizar());
+  $('carPrev').addEventListener('click', () => carrusel.mover(-1));
+  $('carNext').addEventListener('click', () => carrusel.mover(1));
+  $('carPuntos').addEventListener('click', (e) => {
+    const p = e.target.closest('[data-i]');
+    if (p) carrusel.ir(Number(p.dataset.i));
+  });
+  $('gridSalones').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const ts = carrusel.tarjetas();
+    const i = Math.max(0, ts.indexOf(document.activeElement));
+    const j = Math.max(0, Math.min(ts.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)));
+    ts[j].focus({ preventScroll: true });
+    carrusel.ir(j);
   });
 
-  // Salones
-  $('listaSalones').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-salon]');
-    if (b) elegirSalon(b.dataset.salon);
-  });
-  let tBuscar = null;
-  $('buscar').addEventListener('input', () => {
-    clearTimeout(tBuscar);
-    tBuscar = setTimeout(() => { estado.buscar = $('buscar').value; renderLateral(); }, 150);
-  });
-  $('buscar').addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    const primero = $('listaSalones').querySelector('[data-salon]');
-    if (primero) elegirSalon(primero.dataset.salon);
+  // Días del salón
+  $('tabsDias').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-dia]');
+    if (b && !b.disabled) elegirDia(b.dataset.dia);
   });
 
   // Tabla de charlas: teclado pensado para registrar rápido
@@ -1044,11 +1120,11 @@ function iniciar() {
   });
   // Si llegaron datos nuevos mientras escribía, se redibuja al salir del campo.
   tabla.addEventListener('focusout', () => {
-    setTimeout(() => { if (estado.renderPendiente && !escribiendo() && estado.vista === 'vRegistro') renderTabla(); }, 400);
+    setTimeout(() => { if (estado.renderPendiente && !escribiendo() && estado.vista === 'vSalon') renderTabla(); }, 400);
   });
   $('btnGuardarTodo').addEventListener('click', guardarTodo);
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && estado.vista === 'vRegistro') {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && estado.vista === 'vSalon') {
       e.preventDefault();
       guardarTodo();
     }
@@ -1062,7 +1138,7 @@ function iniciar() {
     if (adm.borradores.size && !confirm('Hay correcciones sin guardar. ¿Cerrar la sesión de todos modos?')) return;
     Sesion.olvidarToken();
     estado.admin = null; estado.bitacora = null; adm.borradores.clear(); adm.errores.clear();
-    ir(hashRegistro());
+    ir('#/');
   });
   document.querySelector('.tabs-admin').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]');
@@ -1108,7 +1184,7 @@ function iniciar() {
 function refrescarSiToca(forzar) {
   if (document.visibilityState === 'hidden' || navigator.onLine === false) return;
   if (!forzar && Date.now() - estado.ultimaCarga < REFRESCO_MS - 2000) return;
-  if (estado.vista === 'vRegistro' && estado.datos) cargarDatos(true);
+  if ((estado.vista === 'vSalon' || estado.vista === 'vInicio') && estado.datos) cargarDatos(true);
   else if (estado.vista === 'vAdmin' && estado.admin) cargarAdmin(true);
 }
 

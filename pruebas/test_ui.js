@@ -75,19 +75,32 @@ const fila = (g, id) => g.hojas.Actividades.find((f) => f[0] === id);
   console.log('\nPrueba de interfaz (computadora 1440×900)');
   await page.goto(BASE);
 
-  await paso('Abre sin PIN: 10 salones a la izquierda, hoy (martes) seleccionado', async () => {
-    await page.waitForSelector('#listaSalones .salon');
-    assert.strictEqual(await page.locator('#listaSalones .salon').count(), 10);
-    assert.strictEqual(await page.getAttribute('.dia[aria-selected="true"]', 'data-dia'), 'Martes');
+  await paso('Pantalla principal: título, 10 salones en carrusel, sin PIN', async () => {
+    await page.waitForSelector('.tarjeta-salon');
+    assert.strictEqual(await page.textContent('#kicker'), 'Congreso Médico Nacional 2026');
+    assert.strictEqual(await page.textContent('#tituloEvento'), 'Asistencia');
+    assert.strictEqual(await page.locator('.tarjeta-salon').count(), 10);
+    assert.match(await page.locator('.tarjeta-salon', { hasText: 'Roble 2' }).textContent(), /0 \/ 66 charlas registradas/);
+    assert.match(await page.textContent('#chips'), /Hoy: Martes/);
     assert.ok(await page.locator('#vPin').isHidden(), 'no debe pedir PIN');
-    assert.match(await page.textContent('.salon[data-salon="Laurel 1"]'), /Sin charlas/);
+    await page.screenshot({ path: path.join(CAPTURAS, '0_inicio.png') });
     await sinDesborde(page, 1440);
+  });
+
+  await paso('Carrusel: flechas y puntos', async () => {
+    assert.ok(await page.locator('#carPrev').isDisabled());
+    await page.click('#carNext');
+    await page.waitForFunction(() => document.getElementById('gridSalones').scrollLeft > 50);
+    await page.click('#carPuntos .car-punto >> nth=0');
+    await page.waitForFunction(() => document.getElementById('gridSalones').scrollLeft < 5);
   });
 
   await paso('Roble 2, martes: 4 simposios en orden con sus horarios', async () => {
     await page.fill('#inpNombre', 'Ana Mora');
-    await page.click('.salon[data-salon="Roble 2"]');
-    assert.strictEqual(await page.textContent('#cabSalon'), 'Roble 2');
+    await page.click('.tarjeta-salon[data-salon="Roble 2"]');
+    await page.waitForSelector('#vSalon:not([hidden]) .fila');
+    assert.strictEqual(await page.textContent('#tituloEvento'), 'Roble 2');
+    assert.strictEqual(await page.getAttribute('.tab-dia[aria-selected="true"]', 'data-dia'), 'Martes');
     const titulos = await page.locator('.bloque-cab h3').allTextContents();
     assert.deepStrictEqual(titulos, ['Cirugía 360',
       'Actualización Integral en Cirugía Moderna: Complicaciones, Innovación y Retos Quirúrgicos Actuales',
@@ -112,7 +125,7 @@ const fila = (g, id) => g.hojas.Actividades.find((f) => f[0] === id);
     assert.strictEqual(fila(g, 'ACT-0165')[col(g, 'Registrado_por')], 'Ana Mora');
     assert.strictEqual(await page.textContent('#resTotal'), '42');
     assert.strictEqual(await page.textContent('#resCharlas'), '1 / 15');
-    assert.match(await page.textContent('.salon[data-salon="Roble 2"] .s-cuenta'), /^1\/15/);
+    assert.match(await page.textContent('.tab-dia[data-dia="Martes"]'), /1 de 15/);
   });
 
   await paso('Sin conexión: fila en rojo, conserva el número; Enter de nuevo reintenta', async () => {
@@ -138,35 +151,29 @@ const fila = (g, id) => g.hojas.Actividades.find((f) => f[0] === id);
   });
 
   await paso('Cambios en varios salones + Ctrl+S guarda todo; charla PENDIENTE con etiqueta', async () => {
-    await page.click('.dia[data-dia="Lunes"]');
-    await page.click('.salon[data-salon="Cedro 1"]');
+    await page.click('#btnVolver');
+    await page.waitForSelector('#vInicio:not([hidden])');
+    await page.click('.tarjeta-salon[data-salon="Cedro 1"]');
+    await page.waitForSelector('#vSalon:not([hidden]) .fila');
+    await page.click('.tab-dia[data-dia="Lunes"]');
     const c = page.locator('#c-ACT-0005');
     assert.match(await c.textContent(), /PENDIENTE — expositor por confirmar/);
     assert.match(await c.textContent(), /Expositor por confirmar/);
     await c.locator('input').fill('8');
     assert.match(await page.textContent('#dockSum'), /2 cambios sin guardar en 2 salones/);
-    assert.match(await page.textContent('.salon[data-salon="Cedro 1"]'), /1 sin guardar/);
+    assert.strictEqual(await page.textContent('.tab-dia[data-dia="Lunes"] .bdg'), '1');
     await page.screenshot({ path: path.join(CAPTURAS, '2_cedro1_lunes.png') });
     await page.keyboard.press('Control+s');
     await page.waitForFunction(() => /Todo guardado/.test(document.getElementById('dockSum').textContent));
     assert.strictEqual(fila(g, 'ACT-0005')[col(g, 'Asistentes')], 8);
     assert.strictEqual(fila(g, 'ACT-0167')[col(g, 'Asistentes')], 15);
-    await page.click('.dia[data-dia="Martes"]');
-    await page.click('.salon[data-salon="Roble 2"]');
-    await page.locator('#tabla').click({ position: { x: 5, y: 5 } });
+    await page.goto(BASE + '#/s/Roble%202/Martes');
+    await page.waitForSelector('#c-ACT-0165');
     await page.screenshot({ path: path.join(CAPTURAS, '1_registro_roble2.png') });
   });
 
-  await paso('Buscar filtra salones por nombre o por charla', async () => {
-    await page.fill('#buscar', 'robótica');
-    await page.waitForTimeout(250);
-    assert.deepStrictEqual(await page.locator('#listaSalones .salon .s-nombre').allTextContents(), ['Roble 2']);
-    await page.fill('#buscar', '');
-    await page.waitForTimeout(250);
-    assert.strictEqual(await page.locator('#listaSalones .salon').count(), 10);
-  });
-
   await paso('Administración pide PIN de admin: totales, corrección, bitácora, CSV', async () => {
+    await page.click('#btnVolver');
     await page.click('#btnAdmin');
     await page.fill('#inpPin', '1000');               // un PIN de salón no sirve
     await page.click('#btnEntrar');
@@ -198,9 +205,12 @@ const fila = (g, id) => g.hojas.Actividades.find((f) => f[0] === id);
     await page.click('#admBloqueo');
     await page.waitForFunction(() => /BLOQUEADA/.test(document.querySelector('#admEstadoBloqueo').textContent));
     await page.click('#btnVolver');
-    await page.waitForSelector('#vRegistro:not([hidden])');
+    await page.waitForSelector('#vInicio:not([hidden])');
     await page.waitForFunction(() => !document.getElementById('avisoBloqueo').hidden);
+    await page.click('.tarjeta-salon[data-salon="Roble 2"]');
+    await page.waitForSelector('#vSalon:not([hidden]) .fila');
     assert.ok(await page.locator('#tabla input').first().isDisabled());
+    await page.click('#btnVolver');
     page.once('dialog', (d) => d.accept());
     await page.click('#btnAdmin');
     await page.waitForSelector('#admBloqueo');

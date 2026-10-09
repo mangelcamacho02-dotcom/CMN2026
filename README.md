@@ -158,24 +158,24 @@ Si cambia `index.html`, `styles.css` o `app.js` en GitHub, GitHub Pages se actua
 ## 8. Cómo se usa
 
 **Personal de apoyo** (en computadora)
-1. Abra la página. Arriba, en **Registra**, escriba su nombre (se recuerda en esa computadora).
-2. Arriba están los días; se abre solo el día de hoy. A la izquierda, todos los salones con su avance ("4/15") y cuántas charlas **atrasadas** tienen (ya terminaron y no tienen número).
-3. Toque un salón: a la derecha aparecen sus charlas, agrupadas por simposio. El cursor queda en la primera charla sin número.
+1. Abra la página. Arriba a la derecha, en **Registra**, escriba su nombre (se recuerda en esa computadora).
+2. **Pantalla principal:** los salones en carrusel (flechas ‹ › o deslizar). Cada tarjeta muestra el avance, los días con charlas (hoy en naranja) y cuántas charlas están **atrasadas** (ya terminaron y no tienen número). Toque el salón.
+3. **Pantalla del salón:** arriba los días (se abre hoy); debajo el resumen del día y las charlas en filas, agrupadas por simposio. El cursor queda en la primera charla sin número.
 4. Escriba el número y presione **Enter**: se guarda y el cursor pasa a la siguiente. La fila queda con "✓ 10:42 a.m. · Ana Mora".
    - **↑ / ↓** para moverse entre charlas · **Esc** deshace lo escrito · **Ctrl+S** guarda todo lo pendiente (de todos los salones).
 5. "**En curso**" marca la charla que está ocurriendo ahora; "**Ya terminó**" (naranja) las que ya pasaron sin número.
-6. Si se cae la conexión, la fila se pone en roja, **el número se conserva** y se reintenta con **Enter** o el botón **Guardar** de la fila.
+6. Si se cae la conexión, la fila se pone roja, **el número se conserva** y se reintenta con **Enter** o el botón **Guardar** de la fila.
 7. Si se equivocó, cambie el número y guarde de nuevo: se permite, y queda en la bitácora.
-8. El cuadro **Buscar** filtra salones por nombre o por charla/expositor.
+8. **‹ Salones** (arriba a la izquierda) vuelve a la pantalla principal.
 
-**Administrador** (botón **Administración** arriba a la derecha; pide `PIN_admin`)
+**Administrador** (enlace **Administración** al pie de la pantalla principal; pide `PIN_admin`)
 - **Totales** por día, por salón y por simposio, más el total general. Respetan los filtros.
 - **Charlas**: tabla completa con filtros (día, salón, estado, "solo sin registrar", búsqueda). Puede corregir cualquier número; dejar el campo vacío y guardar borra el registro.
 - **Sin registrar y ya pasaron**: la lista de charlas atrasadas.
 - **Bitácora**: todos los cambios, del más reciente al más antiguo.
 - **Exportar CSV**: descarga lo que está viendo (con los filtros aplicados).
 - **Bloquear / Desbloquear edición** y **Abrir Google Sheet**.
-- **Cerrar sesión** y **← Volver al registro**.
+- **Cerrar sesión** y **‹ Salones** para volver.
 
 ## 9. Problemas frecuentes
 
